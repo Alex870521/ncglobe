@@ -54,7 +54,7 @@ def data(tmp_path, monkeypatch):
     page = root / 'l2' / 'MOD04_L2.A2022306.0200.061.2022306142547.hdf'
     page.write_text('<!DOCTYPE html><title>Earthdata Login</title>' + ' ' * 200)
     monkeypatch.setattr(s, 'ROOTS', [root.resolve()])
-    s._open.clear(); s._roots.clear(); s.ARRAYS.__init__()
+    s.close_all()   # 要真的關檔:只清字典的話,handle 之後在別的執行緒被回收會 segfault; s.ARRAYS.__init__()
     return {'root': root.resolve(), 'swaths': [str(p.resolve()) for p in swaths], 'grid': str(grid.resolve()),
             'page': str(page.resolve())}
 

@@ -193,6 +193,20 @@ def nc_root(file: str) -> netCDF4.Dataset:
         return h
 
 
+def close_all() -> None:
+    """關掉所有開著的檔(拿著讀檔鎖)。只把字典清空的話,handle 會在之後某個時間點被垃圾回收,
+    在隨便哪條執行緒、沒拿鎖的情況下呼叫 HDF5 關檔 —— 剛好別的執行緒在讀檔時就 segfault(CI 的 Linux 上實際遇到)。"""
+    with _open_lock:
+        _open.clear()
+        while _roots:
+            _, h = _roots.popitem()
+            try:
+                with nc_lock():
+                    h.close()
+            except RuntimeError:
+                pass   # 已經關過
+
+
 def _unreadable_reason(file: str) -> str | None:
     """打不開的檔多半不是壞掉,而是下載失敗存成了網頁(例如 Earthdata 登入頁):講清楚。"""
     try:
@@ -2565,6 +2579,12 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_POST(self):
+        # 先把請求內容讀完再回應:不讀就回 4xx 時,對方還在送資料連線就被關掉(connection reset)
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            n = 0
+        self._body = self.rfile.read(min(n, 64_000)) if n > 0 else b''
         if not self._host_ok():
             return
         # 結束伺服器(網頁上的按鈕)。要求自訂標頭:別的網站跨站送不出這個標頭,不能遠端把它關掉
@@ -2576,8 +2596,7 @@ class Handler(BaseHTTPRequestHandler):
         # 設定、清索引:同樣要自訂標頭(別的網站跨站送不出),body 是 JSON
         if self.headers.get('X-Ncglobe') == 'settings':
             try:
-                n = int(self.headers.get('Content-Length') or 0)
-                body = json.loads(self.rfile.read(min(n, 64_000)) or b'{}')
+                body = json.loads(self._body or b'{}')
                 if path == '/api/settings':
                     return self._json(save_settings(body))
                 if path == '/api/index/clear':
