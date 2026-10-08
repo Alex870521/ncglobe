@@ -1,0 +1,2423 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ncglobe</title>
+<!-- ?v=:瀏覽器會把 favicon(連同先前的 404)快取很久;換圖時改這個數字 -->
+<link rel="icon" href="/favicon.ico?v=2" sizes="any">
+<link rel="icon" href="/static/logo.svg?v=2" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/logo-180.png?v=2">
+<script src="/vendor/plotly.min.js" integrity="sha512-QaIUFweb9pyRnQZEYIujSDTHndibSwqsTSb69aedsfAAUpJRUE5yyYfaNAJIbTDuNECyHR/Cc0N7lQJrp0IEpA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="/vendor/globe.gl.min.js" integrity="sha384-1uolMBZ25k3zJcNwCLEv49+L+m2dZudqAzsoSAJfQTzDCSBxJzrMuZ2dkp/5JKiT" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --border: #e3e6eb; --ctl: #b8bfc8; --text: #1f2933; --muted: #56606c;
+    --accent: #2f6fde; --hover: #eef2f8; --sel: #e3ecfb; --coast: #1f2933; --borders: #5a6573; --bad: #d64545;
+  }
+  /* 主題:跟系統,或在「設定 › 外觀」指定(html 的 data-theme) */
+  :root { color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #15171b; --panel: #1d2026; --border: #2c3038; --ctl: #4a5160; --text: #e6e8eb; --muted: #9aa3ae;
+      --accent: #6ea0ff; --hover: #262a31; --sel: #23324d; --coast: #e6e8eb; --borders: #aab3be; --bad: #ff7b7b;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #15171b; --panel: #1d2026; --border: #2c3038; --ctl: #4a5160; --text: #e6e8eb; --muted: #9aa3ae;
+      --accent: #6ea0ff; --hover: #262a31; --sel: #23324d; --coast: #e6e8eb; --borders: #aab3be; --bad: #ff7b7b;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
+    display: grid; grid-template-columns: var(--side-w, 340px) minmax(0, 1fr); height: 100vh;
+  }
+  body.side-off { grid-template-columns: 0 minmax(0, 1fr); }
+  body.side-off aside { visibility: hidden; }
+  aside { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; position: relative; }
+  .side-resize { position: absolute; top: 0; right: -4px; width: 8px; height: 100%; cursor: col-resize; z-index: 3; }
+  .side-resize:hover, .side-resize.drag { background: var(--accent); opacity: .25; }
+  .tabs { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .tabs button { flex: 1; height: 26px; border: 0; background: var(--panel); color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+  .tabs button + button { border-left: 1px solid var(--border); }
+  .tabs button.on { background: var(--sel); color: var(--accent); font-weight: 600; }
+  .tabs button:disabled { opacity: .6; cursor: default; }
+  .grp { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+  .grp:hover { color: var(--accent); }
+  .grp .tw { width: 10px; color: var(--muted); font-size: 11px; }
+  .grp .cnt { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .side-head { padding: 12px 14px 8px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+  .brand { font-weight: 650; font-size: 18px; display: flex; align-items: center; gap: 10px; letter-spacing: .2px; }
+  .brand img { display: block; flex-shrink: 0; }
+  input[type=checkbox] { width: 16px; height: 16px; vertical-align: -3px; }
+  .filenav .btn, #dims .btn { min-width: 32px; min-height: 30px; }
+  input[type=range] { height: 24px; }
+  input.bad { outline: 2px solid var(--bad); outline-offset: -1px; }
+  #quitBtn { margin-left: auto; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; min-width: 32px; min-height: 32px; border-radius: 6px; }
+  #quitBtn:hover { color: var(--bad); background: var(--hover, rgba(0,0,0,.06)); }
+  .crumb { color: var(--muted); font-size: 13px; word-break: break-all; }
+  .crumb button { all: unset; cursor: pointer; color: var(--accent); padding: 4px 2px; border-radius: 3px; }
+  .crumb button:focus-visible, .item:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .crumb button:hover { text-decoration: underline; }
+  .item .nm > span { display: block; overflow: hidden; white-space: nowrap; }
+  .item .sub { display: block; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-scroll { flex: 1; overflow-y: auto; padding: 6px 6px 16px; }
+  /* 側欄底部:頭像 + 名字(個人設定)、有新版時的「更新」、設定 */
+  /* 圖示按鈕:SVG 置中(文字符號 ‹ × ⚙ 各字型基準線不同,會歪) */
+  .ibtn { display: inline-grid !important; place-items: center; padding: 0 !important; width: 32px; height: 32px; line-height: 0; }
+  .ibtn svg, .iconbtn svg, #quitBtn svg, .side-open svg, .errx svg { display: block; }
+  .iconbtn, #quitBtn, .errx { display: inline-grid; place-items: center; line-height: 0; }
+  .side-open { display: none; position: fixed; left: 0; top: 50%; transform: translateY(-50%); z-index: 20; width: 22px; height: 56px;
+    border: 1px solid var(--ctl); border-left: 0; border-radius: 0 8px 8px 0; background: var(--panel); color: var(--muted); cursor: pointer; padding: 0;
+    place-items: center; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+  .side-open:hover { color: var(--text); }
+  body.side-off .side-open { display: grid; }
+  .avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+  /* 圖層選單 */
+  .layers { position: relative; }
+  .layers > summary { list-style: none; cursor: pointer; padding: 4px 10px; border: 1px solid var(--ctl); border-radius: 6px; background: var(--panel); color: var(--text); }
+  .layers > summary::-webkit-details-marker { display: none; }
+  .layers > summary::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); }
+  .layers[open] > summary { border-color: var(--accent); }
+  .layer-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; background: var(--panel); border: 1px solid var(--ctl); border-radius: 8px;
+    padding: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.15); display: flex; flex-direction: column; min-width: 140px; }
+  .layer-pop label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--text); cursor: pointer; white-space: nowrap; }
+  .layer-pop label:hover { background: var(--hover); }
+  .side-foot { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); }
+  .me { display: flex; align-items: center; gap: 10px; flex: 0 1 auto; min-width: 0; padding: 4px 6px; }   /* 只顯示,不能點:設定都從 ⚙ 進 */
+  .avatar { width: 32px; height: 32px; border-radius: 50%; flex: 0 0 auto; display: grid; place-items: center;
+    color: #fff; font-weight: 650; font-size: 14px; letter-spacing: .5px; }
+  .me-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+  .me-name.empty { color: var(--muted); font-weight: 400; }
+  #updBtn:not([hidden]) ~ #setBtn { margin-left: 0; }   /* 有「更新」時 ⚙ 緊貼在它右邊 */
+  .iconbtn { margin-left: auto; width: 38px; height: 38px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: 18px; cursor: pointer; }
+  .iconbtn:hover { background: var(--hover); color: var(--text); }
+  button.btn.upd { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 45%, var(--panel)) !important;
+    color: var(--accent); font-weight: 600; }
+  /* 設定視窗 */
+  .set-body { overflow-y: auto; }
+  .set-body .sec { margin-top: 6px; }
+  .set-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; flex-wrap: wrap; }
+  .set-row > label:first-child { width: 120px; color: var(--muted); flex: 0 0 auto; }
+  .set-note { color: var(--muted); font-size: 13px; margin: 2px 0 6px 132px; }
+  .swatches { display: flex; gap: 6px; }
+  .swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+  .swatch.on { border-color: var(--text); }
+  .set-msg { font-size: 13px; color: var(--muted); }
+  .set-msg.bad { color: var(--bad); }
+  .sec { font-size: 12px; color: var(--muted); letter-spacing: .04em; padding: 10px 8px 4px; }
+  .item {
+    display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; background: none;
+    color: var(--text); font: inherit; text-align: left; border-radius: 6px; cursor: pointer;
+  }
+  .item:hover { background: var(--hover); }
+  .item.sel { background: var(--sel); }
+  .item .ic { width: 14px; color: var(--muted); flex-shrink: 0; text-align: center; }
+  .item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { color: var(--muted); font-size: 12px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .item.dim { color: var(--muted); cursor: default; }
+  .item.dim:hover { background: none; }
+  .grp { font-weight: 600; padding: 8px 8px 2px; font-size: 13px; }
+  input[type=search] { width: 100%; }
+
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  #bar1 { flex-wrap: wrap; }
+  #bar1 > * { flex-shrink: 0; }
+  #bar1 > .title { flex: 1 1 220px; min-width: 160px; }   /* 窄視窗(1024 以下)標題不再被擠成「…」 */
+  @media (max-width: 1100px) { .filenav .fn { max-width: 200px; } }
+  .title { font-weight: 600; font-size: 15px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .title .u { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .filenav { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; min-width: 0; }
+  .filenav .fn { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .filenav .fn:hover { color: var(--accent); text-decoration: underline; }
+  .item.back { color: var(--accent); }
+  .ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .ctl input[type=number] { width: 100px; font-variant-numeric: tabular-nums; }
+  .ctl input[type=range] { width: 200px; accent-color: var(--accent); }
+  select, input[type=number], input[type=search], input[type=text], button.btn {
+    height: 28px; padding: 0 8px; border: 1px solid var(--ctl); border-radius: 6px;
+    background: var(--panel); color: var(--text); font: inherit; font-size: 13px;
+  }
+  button.btn { cursor: pointer; white-space: nowrap; }
+  button.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button.btn:disabled, input:disabled, select:disabled { opacity: .6; cursor: not-allowed; border-style: dashed; }
+  button.btn.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+  .spacer { flex: 1; }
+  .dimlabel { min-width: 150px; color: var(--text); font-variant-numeric: tabular-nums; }
+  #plot .imagelayer image { image-rendering: pixelated; }   /* 網格影像一格一像素,放大不能糊成漸層 */
+  #stage { flex: 1; min-height: 0; display: flex; }
+  #plotwrap { flex: 1; min-width: 0; position: relative; }
+  #plot, #earth { position: absolute; inset: 0; }
+  #earth { cursor: grab; }
+  #earth:active { cursor: grabbing; }
+  #compFiles td { padding: 1px 12px 1px 0; vertical-align: top; font-variant-numeric: tabular-nums; }
+  #compFiles { max-height: 30vh; overflow-y: auto; }
+  .gtip { position: absolute; z-index: 6; pointer-events: none; background: var(--panel); border: 1px solid var(--border);
+          border-radius: 6px; padding: 4px 8px; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .legend { position: absolute; right: 14px; bottom: 14px; z-index: 4; background: var(--panel); border: 1px solid var(--border);
+            border-radius: 8px; padding: 8px 10px; font-size: 12px; color: var(--muted); width: 240px; }
+  .legend .bar { height: 10px; border-radius: 3px; margin: 4px 0; }
+  .legend .ends { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; color: var(--text); }
+  .status { padding: 6px 14px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); background: var(--panel); display: flex; gap: 14px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+  .note { padding: 6px 14px; font-size: 13px; color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--border); }
+  .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 24px; }
+  .err { color: var(--bad); max-width: 560px; }
+  /* 疊在地圖上的訊息(錯誤、沒有資料):要有底色與外框,不然跟圖混在一起看不清 */
+  /* 不用左側色條:淡色調底 + 細邊框 + 類型色小圖示 */
+  #empty .err, #empty .msg { background: color-mix(in srgb, var(--bad) 7%, var(--panel)); color: var(--text);
+    border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--panel)); border-radius: 10px;
+    padding: 12px 40px 12px 14px; box-shadow: 0 4px 18px rgba(0,0,0,.16); line-height: 1.6; text-align: left; position: relative;
+    display: flex; gap: 10px; align-items: flex-start; }
+  .err-ic { flex: 0 0 auto; width: 20px; height: 20px; margin-top: 2px; border-radius: 50%; background: var(--bad); color: var(--panel);
+    font: 700 13px/20px system-ui; text-align: center; }
+  .errx { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border: 0; border-radius: 6px; background: none;
+    color: var(--muted); font-size: 18px; cursor: pointer; }
+  .errx:hover { background: var(--hover); color: var(--text); }
+  details.attrs { padding: 0 14px 8px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  details.attrs summary { cursor: pointer; color: var(--muted); font-size: 13px; padding-top: 6px; width: max-content; }
+  details.attrs .attrScroll { max-height: 200px; overflow-y: auto; }
+  details.attrs table { border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+  details.attrs td { padding: 2px 12px 2px 0; vertical-align: top; }
+  details.attrs td:first-child { color: var(--muted); white-space: nowrap; }
+  /* 讀取中:地圖區正中央的卡片(轉圈 + 秒數 + 取消) */
+  .busy { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; display: flex; flex-direction: column;
+          align-items: center; gap: 12px; min-width: 180px; padding: 20px 26px; background: var(--panel); border: 1px solid var(--ctl);
+          border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.18); color: var(--text); font-size: 14px; }
+  .spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid color-mix(in srgb, var(--accent) 18%, var(--panel));
+             border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-color: var(--accent); opacity: .5; } }
+  /* point inspector */
+  #insp { width: 340px; flex-shrink: 0; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+  .insp-head { display: flex; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 600; }
+  .insp-body { overflow-y: auto; padding: 8px 12px 16px; font-size: 13px; }
+  .insp-body table { width: 100%; border-collapse: collapse; }
+  .insp-body td { padding: 3px 4px; border-bottom: 1px solid var(--border); vertical-align: top; font-variant-numeric: tabular-nums; }
+  .insp-body td:first-child { color: var(--muted); word-break: break-all; }
+  .insp-body tr.cur td { color: var(--accent); font-weight: 600; }
+  .insp-note { background: var(--hover); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; color: var(--bad); }
+  .warn { color: var(--bad); }
+  .item .ic.pass { color: var(--accent); }
+  .tag { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+  #compBar { flex-wrap: nowrap; }
+  #compBar > * { flex-shrink: 0; }
+  #compBar > #compInfo { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #compBar > .spacer { display: none; }
+  .nodata { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 5; background: var(--panel);
+            border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; text-align: center; max-width: 440px;
+            box-shadow: 0 4px 16px rgba(0,0,0,.12); display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .cm-row { display: flex; gap: 8px 14px; align-items: center; flex-wrap: wrap; }
+  .cm-row input[type=date] { height: 28px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; font-size: 13px; padding: 0 6px; }
+  #series { height: 220px; margin-top: 10px; }
+  #xseries { height: 240px; margin-top: 6px; }
+  .xs-ctl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; z-index: 50; }
+  .modal { width: min(760px, 92vw); max-height: 86vh; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+  .modal-head { padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; align-items: center; }
+  .modal-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .modal-foot { padding: 10px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+  .filelist { overflow-y: auto; max-height: 42vh; border: 1px solid var(--border); border-radius: 6px; padding: 4px 0; }
+  .filelist label { display: flex; gap: 8px; align-items: center; padding: 3px 10px; font-size: 13px; cursor: pointer; }
+  .filelist label:hover { background: var(--hover); }
+  .filelist .rel { color: var(--muted); font-size: 12px; min-width: 64px; }
+  .filelist .sz { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .prog { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .prog > div { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+  .comp-badge { color: var(--accent); font-weight: 600; }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+  .help { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<button class="side-open" id="sideOpen" title="展開側欄([)" aria-label="展開側欄" data-icon="right" data-size="18"></button>
+<aside>
+  <div class="side-head">
+    <div class="brand"><img src="/static/logo.svg" alt="" width="28" height="28" onerror="this.remove()">ncglobe<button id="quitBtn" title="結束 ncglobe(關閉背景的伺服器;下次再從 App 或指令開啟)" aria-label="結束 ncglobe" data-icon="power" data-size="18"></button></div>
+    <div class="crumb" id="crumb"></div>
+    <div class="tabs" id="tabs" hidden><button id="tabFiles" title="這個檔所在資料夾的檔案">檔案</button><button id="tabVars" title="目前這個檔的變數">變數</button></div>
+    <input type="search" id="search" placeholder="篩選檔名或日期(例如 2026-01-02)" hidden>
+  </div>
+  <div class="side-scroll" id="side"></div>
+  <div class="side-foot">
+    <div class="me"><span class="avatar" id="avatar" aria-hidden="true">?</span><span class="me-name empty" id="meName">設定名字</span></div>
+    <button class="btn upd" id="updBtn" hidden style="margin-left:auto"></button>
+    <button class="iconbtn" id="setBtn" title="設定" aria-label="設定" data-icon="gear" data-size="22"></button>
+  </div>
+  <div class="side-resize" id="sideResize" title="拖曳調整側欄寬度;雙擊回到預設"></div>
+</aside>
+
+<main>
+  <div class="bar" id="bar1" hidden>
+    <div class="title" id="title"></div>
+    <div class="spacer"></div>
+    <div class="filenav">
+      <button class="btn ibtn" id="prevFile" title="上一個檔(←)" aria-label="上一個檔" data-icon="left"></button>
+      <span class="fn" id="fileName" role="button" tabindex="0"></span>
+      <button class="btn ibtn" id="nextFile" title="下一個檔(→)" aria-label="下一個檔" data-icon="right"></button>
+    </div>
+    <label class="ctl">檢視
+      <select id="proj">
+        <option value="plate">平面地圖</option>
+        <option value="ortho">地球儀</option>
+      </select>
+    </label>
+    <button class="btn" id="compBtn" title="把多個檔合成一張:同一天多軌拼接,或多日平均">合成…</button>
+    <button class="btn" id="exportBtn" title="下載目前畫面的高解析 PNG(含標題、色階條、海岸線);地球儀放大到某個區域時,匯出該區域的平面地圖">匯出 PNG</button>
+  </div>
+  <div class="bar" id="bar2" hidden>
+    <label class="ctl">色表
+      <select id="cmap" title="色表:Jet 對比強、適合找高值;Viridis、Turbo 對色盲較友善;RdBu 適合有正負的差值">
+        <option>Viridis</option><option>Turbo</option><option selected>Jet</option><option>Plasma</option>
+        <option>Inferno</option><option>RdBu</option><option>YlOrRd</option><option>Greys</option>
+      </select>
+    </label>
+    <label class="ctl" title="顏色順序倒過來"><input type="checkbox" id="crev"> 反轉</label>
+    <label class="ctl" id="unitBox" hidden title="換顯示單位:地圖、色階、點選值、時序與匯出都跟著換;資料本身不變">單位 <select id="unit"></select></label>
+    <label class="ctl">範圍
+      <input type="number" id="vmin" step="any"> – <input type="number" id="vmax" step="any">
+    </label>
+    <button class="btn" id="autoP" title="用畫面資料的 2–98 百分位">自動</button>
+    <button class="btn" id="autoM" title="用畫面資料的最小–最大">全距</button>
+    <button class="btn" id="lockR" title="鎖定:換檔、換時間、縮放都不重算範圍,方便比較顏色">鎖定範圍</button>
+    <label class="ctl" title="對數色階:數值跨好幾個數量級(例如 SO₂、CO 熱點)時,低值的變化也看得出來;範圍框裡的數字會變成 log10 值"><input type="checkbox" id="log"> log10</label>
+    <label class="ctl" id="qaBox" hidden title="qa_value:每個像素的資料品質分數,0–1,越高越可靠。0.5 是一般用途;NO₂ 對流層柱做定量分析建議 0.75(官方建議)。低於門檻的像素不畫,點選時會說明它被篩掉。清空 = 不篩。">qa ≥ <input type="number" id="qa" step="0.05" min="0" max="1" value="0.5" style="width:64px"></label>
+    <details class="ctl layers" id="geoBox" hidden>
+      <summary title="地圖上疊加的圖層(選擇會記住)">圖層</summary>
+      <div class="layer-pop">
+        <label><input type="checkbox" id="coast" checked> 海岸線</label>
+        <label><input type="checkbox" id="borders"> 國界</label>
+        <label><input type="checkbox" id="grid"> 經緯線</label>
+      </div>
+    </details>
+    <label class="ctl" id="quickBox" hidden title="把地圖移到常用的區域(台灣、東亞、全球…)">跳到
+      <select id="quick">
+        <option value="">—</option><option value="data">資料範圍</option><option value="global">全球</option>
+        <option value="eastasia">東亞</option><option value="taiwan">台灣</option>
+      </select>
+    </label>
+    <div class="spacer"></div>
+    <span class="help">拖曳平移 · <kbd>Shift</kbd>+拖曳框選放大 · 點地圖看該點的值 · <kbd>←</kbd><kbd>→</kbd> 換檔 · <span id="helpPlay"><kbd>,</kbd><kbd>.</kbd> 換時間 · <kbd>空白</kbd> 播放</span></span>
+  </div>
+  <div class="bar" id="compBar" hidden>
+    <span class="comp-badge" id="compLabel"></span>
+    <span class="help" id="compSettings"></span>
+    <label class="ctl">顯示
+      <select id="compMode"><option value="mean">平均</option><option value="count">覆蓋檔數</option><option value="std">檔間標準差</option></select>
+    </label>
+    <label class="ctl">網格
+      <select id="compRes"><option value="">自動(依視野)</option><option>0.02</option><option>0.05</option><option>0.1</option><option>0.25</option><option>0.5</option><option>1</option></select>°
+    </label>
+    <span class="help" id="compInfo"></span>
+    <button class="btn" id="compFilesBtn" title="這次合成實際用了哪些檔、提醒">檔案清單</button>
+    <button class="btn" id="compNcBtn" title="把目前視野、目前格距的合成結果存成 NetCDF(含平均、覆蓋數、標準差與所用檔案)">匯出 NetCDF</button>
+    <div class="spacer"></div>
+    <button class="btn" id="compExit">離開合成</button>
+  </div>
+  <div class="note" id="compFiles" hidden></div>
+  <div class="bar" id="dims" hidden></div>
+  <div class="note" id="note" hidden></div>
+  <details class="attrs" id="attrs" hidden><summary>屬性</summary><div class="attrScroll"><table id="attrTable"></table></div></details>
+  <div id="stage">
+    <div id="plotwrap">
+      <div id="plot"></div>
+      <div id="earth" hidden></div>
+      <div class="gtip" id="gtip" hidden></div>
+      <div class="legend" id="legend" hidden><div id="legendTitle"></div><div class="bar" id="legendBar"></div><div class="ends"><span id="legendMin"></span><span id="legendMax"></span></div></div>
+      <div class="empty" id="empty">左側選一個資料夾 → 檔案 → 變數</div>
+      <div class="nodata" id="nodata" hidden><span id="nodataText"></span><span id="nodataBtns"></span></div>
+      <div class="busy" id="busy" hidden role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span id="busyText">讀取中…</span><button class="btn" id="cancelBtn">取消</button></div>
+    </div>
+    <div id="insp" hidden>
+      <div class="insp-head"><span id="inspTitle">點選的位置</span><div class="spacer"></div><button class="btn ibtn" id="inspClose" title="關閉(Esc)" aria-label="關閉點選面板" data-icon="x"></button></div>
+      <div class="insp-body" id="inspBody"></div>
+    </div>
+  </div>
+  <div class="status" id="status"></div>
+</main>
+
+<div class="modal-bg" id="setModal" hidden>
+  <div class="modal" role="dialog" aria-label="設定" style="width:min(620px,92vw)">
+    <div class="modal-head">設定<div class="spacer"></div><button class="btn ibtn" id="setClose" title="關閉(Esc)" aria-label="關閉設定" data-icon="x"></button></div>
+    <div class="modal-body set-body">
+      <div class="sec">個人</div>
+      <div class="set-row"><label for="sName">名字</label><input type="text" id="sName" maxlength="40" placeholder="留空 = 用這台電腦帳號的名字" style="width:220px"></div>
+      <div class="set-row"><label for="sSystem">用電腦帳號</label><input type="checkbox" id="sSystem"><span class="set-msg" id="sSystemMsg">名字留空時,用這台電腦帳號的名字與大頭照(只在本機讀)</span></div>
+      <div class="set-row"><label>頭像顏色</label><div class="swatches" id="sColors"></div></div>
+      <div class="set-row"><label for="sCredit">匯出 PNG 標記</label><input type="checkbox" id="sCredit"><span class="set-msg">在圖的右下角小字標上 ncglobe</span></div>
+      <div class="sec">外觀</div>
+      <div class="set-row"><label for="sTheme">主題</label><select id="sTheme"><option value="system">跟系統</option><option value="light">淺色</option><option value="dark">深色</option></select></div>
+      <div class="sec">地圖預設值</div>
+      <div class="set-note" style="margin-left:2px">開新檔時套用;網址或目前畫面上改過的設定優先。</div>
+      <div class="set-row"><label for="sCmap">色表</label><select id="sCmap"></select></div>
+      <div class="set-row"><label>圖層</label><span class="set-msg">在工具列的「圖層」選單勾選(海岸線、國界、經緯線),選擇會記住</span></div>
+      <div class="set-row"><label for="sQa">qa 門檻</label><input type="number" id="sQa" min="0" max="1" step="0.05" style="width:80px"><span class="set-msg">S5P 的 qa_value,0–1;NO₂ 定量分析官方建議 0.75</span></div>
+      <div class="set-row"><label for="sSpeed">播放速度</label><select id="sSpeed"><option value="1500">慢</option><option value="700">中</option><option value="250">快</option></select></div>
+      <div class="sec">更新</div>
+      <div class="set-row"><label>目前版本</label><span id="sVersion">—</span></div>
+      <div class="set-row"><label for="sRepo">更新來源</label><input type="text" id="sRepo" placeholder="GitHub 專案,例如 帳號/ncglobe" style="width:260px"></div>
+      <div class="set-note">每 6 小時問一次這個 GitHub 專案有沒有新的 Release;清空 = 不檢查、不連網路。</div>
+      <div class="set-row"><label for="sAuto">自動檢查</label><input type="checkbox" id="sAuto"><button class="btn" id="sCheck">立即檢查</button><span class="set-msg" id="sUpdMsg"></span></div>
+      <div class="sec">資料</div>
+      <div class="set-row"><label>檔名索引</label><button class="btn" id="sClearIndex">清除</button><span class="set-msg" id="sIndexMsg">搜尋子資料夾用的檔名清單;檔案搬動後搜尋結果對不上時清除</span></div>
+      <div class="set-row"><label>最近開啟</label><button class="btn" id="sClearRecent">清除清單</button><span class="set-msg" id="sRecentMsg"></span></div>
+      <div class="sec">關於</div>
+      <div class="set-row" style="align-items:flex-start"><label>可讀的資料夾</label><div id="sRoots" class="set-msg" style="word-break:break-all"></div></div>
+      <div class="set-row"><label>設定檔</label><span class="set-msg" id="sFile"></span></div>
+      <div class="set-msg bad" id="setErr"></div>
+    </div>
+  </div>
+</div>
+<div class="modal-bg" id="compModal" hidden>
+  <div class="modal">
+    <div class="modal-head">合成:<span id="cmVar" style="margin-left:6px;font-weight:400"></span><div class="spacer"></div><button class="btn ibtn" id="cmClose" title="關閉(Esc)" aria-label="關閉合成視窗" data-icon="x"></button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <label class="ctl"><input type="radio" name="cmKind" value="mean" checked> 合成:所選檔的平均(同日拼接 / 多日平均)</label>
+        <label class="ctl"><input type="radio" name="cmKind" value="diff"> 相減:目前的檔 − 所選檔的平均</label>
+      </div>
+      <div class="cm-row">
+        <label class="ctl">平均方式
+          <select id="cmWeight">
+            <option value="file">每個檔等權(先各檔分格平均,再跨檔平均)</option>
+            <option value="day">每天等權(同一個 UTC 日的軌先合併,再跨天平均)</option>
+            <option value="pixel">每個像素等權(所有觀測直接平均)</option>
+          </select>
+        </label>
+        <span class="help" id="cmQa"></span>
+      </div>
+      <div class="help">同一軌有 NRTI / OFFL / RPRO 重複時只留一個;相減時 B 會自動排除 A。L2 兩軌像素位置不同,相減是兩邊先各自分格再相減。</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label class="ctl">從 <select id="cmScope"></select></label>
+        <span class="help" id="cmScopeInfo"></span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label class="ctl">觀測日期 <input type="date" id="cmFrom"> – <input type="date" id="cmTo"></label>
+        <input type="search" id="cmFilter" placeholder="再篩檔名或子資料夾(例如 OFFL、2026/03)" style="flex:1;min-width:160px">
+        <button class="btn" id="cmAll">勾選清單中全部</button>
+        <button class="btn" id="cmNone">取消清單中全部</button>
+        <span class="help" id="cmCount"></span>
+      </div>
+      <div class="filelist" id="cmList"></div>
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <label class="ctl">範圍 <select id="cmRegion"><option value="view">目前視野</option><option value="global">全部(不裁切)</option></select></label>
+        <span class="help" id="cmRegionInfo"></span>
+      </div>
+      <div id="cmProgWrap" hidden>
+        <div class="prog"><div id="cmProg"></div></div>
+        <div class="help" id="cmProgText" style="margin-top:4px"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="err" id="cmErr"></span>
+      <div class="spacer"></div>
+      <button class="btn" id="cmCancel" hidden>取消合成</button>
+      <button class="btn on" id="cmStart">開始合成</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const LAYER_IDS = ['coast', 'borders', 'grid'];   // 圖層勾選框(工具列「圖層」選單)
+// 圖示(SVG,stroke 用 currentColor):按鈕正中央、深淺色都跟著文字顏色
+const ICONS = {
+  left: '<path d="m15 18-6-6 6-6"/>', right: '<path d="m9 18 6-6-6-6"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none"/>',
+  stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor" stroke="none"/>',
+  power: '<path d="M12 3v9"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+};
+const svg = (name, size = 16) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+document.querySelectorAll('[data-icon]').forEach(b => { b.innerHTML = svg(b.dataset.icon, +b.dataset.size || 16); });
+const CS = {};          // cmap → Plotly colorscale(後端從 matplotlib 取樣,影像與色階條同一份)
+const S = { closedGroups: new Set(), varMem: {}, geoView: null, sideMode: null, dir: null, file: null, info: null, group: '', variable: null, detail: null, idx: {}, bbox: null,
+            lastRange: null, data: null, outlines: null, image: null, manualRange: false, playing: false, files: [], composite: null, pv: null };   // pv = 投影模式的 {proj, clon, clat, extent}
+const TIMEOUT = { default: 90000, figure: 180000 };
+let reqSeq = 0;
+
+// ---------------------------------------------------------------- 請求:逾時、取消、快取
+const active = new Set();          // 進行中的 AbortController,「取消」一次全部中止
+const cache = new Map();           // URL → 回應(切片、影像);播放時預讀下一格用
+const CACHE_MAX = 40;
+let busyStart = 0, busyTimer = null;
+
+function urlOf(path, params) {
+  const q = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([, v]) => v !== null && v !== undefined)));
+  return `${path}?${q}`;
+}
+// 結束伺服器:App 版沒有終端機可以按 Ctrl+C。標頭 X-Ncglobe 讓別的網站無法跨站送出這個請求
+$('quitBtn').onclick = async () => {
+  if (!confirm('結束 ncglobe?目前的畫面與合成結果會關閉。')) return;
+  try { await fetch('/api/quit', { method: 'POST', headers: { 'X-Ncglobe': 'quit' } }); } catch {}
+  document.body.innerHTML = '<div style="display:grid;place-items:center;height:100vh;color:var(--muted);font:15px system-ui">ncglobe 已結束,可以關閉這個分頁。</div>';
+};
+
+async function api(path, params = {}, opt = {}) {
+  const url = urlOf(path, params);
+  if (opt.cache && cache.has(url)) { const v = cache.get(url); cache.delete(url); cache.set(url, v); return v; }
+  const ctrl = new AbortController();
+  const ms = opt.timeout ?? TIMEOUT.default;
+  const timer = setTimeout(() => ctrl.abort(new DOMException(`逾時(${ms / 1000} 秒)`, 'TimeoutError')), ms);
+  if (!opt.quiet) { active.add(ctrl); busy(true); }
+  try {
+    // X-Ncglobe:伺服器只讓帶這個標頭的請求做有副作用的事(開始/取消合成、連網檢查更新);別的網站跨站送不出它
+    const r = await fetch(url, { signal: ctrl.signal, headers: { 'X-Ncglobe': '1' } });
+    if (opt.blob) {
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+      return await r.blob();
+    }
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    if (opt.cache) { cache.set(url, j); while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value); }
+    return j;
+  } catch (e) {
+    if (e.name === 'TimeoutError' || ctrl.signal.reason?.name === 'TimeoutError')
+      throw new Error(`伺服器 ${ms / 1000} 秒內沒有回應。可能是檔案的壓縮塊很大、第一次讀取要整塊解壓,或硬碟太慢;可以再按一次,伺服器若已讀完會直接用快取。`);
+    if (e.name === 'AbortError') throw Object.assign(new Error('已取消'), { cancelled: true });
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (!opt.quiet) { active.delete(ctrl); busy(active.size > 0); }
+  }
+}
+let busyShow = null;
+function busy(on) {
+  if (on && !S.data) $('empty').hidden = true;   // 讀取中還顯示「左側選一個資料夾…」,像是操作錯了
+  if (on && !busyTimer) {
+    busyStart = performance.now();
+    $('busyText').textContent = '讀取中…';
+    busyTimer = setInterval(() => { $('busyText').textContent = `讀取中… ${((performance.now() - busyStart) / 1000).toFixed(0)} 秒`; }, 500);
+    // 平移、縮放的小請求一兩百毫秒就回來:超過 0.4 秒才出現,免得一直閃;還沒有地圖(第一次開檔)時馬上出現
+    busyShow = setTimeout(() => { $('busy').hidden = false; }, S.data ? 400 : 0);
+  } else if (!on) {
+    clearTimeout(busyShow); busyShow = null;
+    $('busy').hidden = true;
+    if (busyTimer) { clearInterval(busyTimer); busyTimer = null; }
+  }
+}
+$('cancelBtn').onclick = () => { stopPlay(); for (const c of active) c.abort(); };
+
+const fmtSize = b => b > 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : (b / 1e3).toFixed(0) + ' KB';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmtNum = v => v === null || v === undefined ? '—' : typeof v !== 'number' ? String(v) : Math.abs(v) >= 1e4 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(4) : +v.toPrecision(5);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const parentOf = p => p.replace(/\/[^/]+$/, '');
+// 經緯度一律「經度, 緯度」並標 E/W、N/S,平面圖、地球儀、點選面板同一種寫法
+const fmtLL = (lon, lat, d = 2) => `${Math.abs(lon).toFixed(d)}°${lon < 0 ? 'W' : 'E'}, ${Math.abs(lat).toFixed(d)}°${lat < 0 ? 'S' : 'N'}`;
+const fmtBox = b => `${fmtLL(b[0], b[1], 1)} – ${fmtLL(b[2], b[3], 1)}`;
+// 範圍輸入框:很小或很大的數用科學記號,不然 1.2e-5 會被擠成 0.0000
+const fmtIn = v => !Number.isFinite(v) ? '' : (v !== 0 && (Math.abs(v) < 1e-3 || Math.abs(v) >= 1e5)) ? v.toExponential(3) : String(+v.toPrecision(4));
+// 長檔名從中間省略:S5P 檔名前 20 個字都一樣,能區分的是中間的時間和尾巴
+const midTrunc = (t, n = 46) => t.length <= n ? t : t.slice(0, Math.ceil(n * 0.45)) + '…' + t.slice(-Math.floor(n * 0.5));
+const obsLabel = f => f?.start ? `${f.start} UTC${f.orbit ? ' · 軌道 ' + f.orbit : ''}`
+  : f?.tile ? `${f.date} · 格點 ${f.tile}` : null;   // MODIS 格點產品(MCD19A2…)只有日期與格點
+// 檔案裡寫的單位 "None"、"1"、"-" 都是沒有單位:不顯示,免得被當成數字或字
+// ERA5 這類寫法「m s**-1」「kg m**-2」顯示成上標(只在畫面上;後端與匯出用原始寫法)
+const SUP = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
+const cleanUnits = u => (!u || /^(none|1|-|unitless|dimensionless)$/i.test(String(u).trim())) ? ''
+  : String(u).replace(/\*\*(-?\d+)/g, (_, n) => [...n].map(c => SUP[c]).join(''));
+const cmapName = () => $('cmap').value + ($('crev').checked ? '_r' : '');
+
+// ---------------------------------------------------------------- 網址記住狀態
+function saveHash() {
+  // 分頁 / App 視窗標題:檔名(合成時標明),一眼分得出是哪個檔
+  document.title = S.composite ? `合成 · ${S.variable || ''} · ncglobe` : S.file ? `${S.file.split('/').pop()} · ncglobe` : 'ncglobe';
+  if (!S.file) return;
+  const h = new URLSearchParams();
+  h.set('f', S.file); h.set('g', S.group); h.set('v', S.variable || '');
+  if (Object.keys(S.idx).length) h.set('i', JSON.stringify(S.idx));
+  const box = S.lastRange || S.bbox;
+  if (box) h.set('b', box.map(v => +v.toFixed(3)).join(','));
+  const cm = S.composite?.diff && S.prevCmap ? S.prevCmap : $('cmap').value;   // 相減自動換的 RdBu 不寫進網址
+  if (cm !== 'Jet') h.set('c', cm);   // 預設色表 Jet 不寫進網址
+  if ($('crev').checked) h.set('cr', '1');
+  if (+$('unit').value) h.set('u', UNIT().label);
+  if (S.composite) {
+    h.set('cj', S.composite.id); h.set('cm', $('compMode').value);
+    if ($('compRes').value) h.set('cg', $('compRes').value);
+    if (S.composite.box) h.set('cb', S.composite.box.map(v => +v.toFixed(3)).join(','));
+  }
+  if (S.manualRange) h.set('r', `${$('vmin').value},${$('vmax').value}`);
+  if ($('log').checked) h.set('l', '1');
+  if (S.detail?.has_qa && $('qa').value !== '0.5') h.set('q', $('qa').value);
+  if ($('proj').value !== 'plate') {
+    h.set('p', $('proj').value);
+    if (S.pv) { h.set('pc', [S.pv.clon, S.pv.clat, S.pv.alt].filter(v => v !== undefined).join(',')); if (S.pv.extent && S.pv.proj !== 'ortho') h.set('pe', S.pv.extent.join(',')); }
+  }
+  history.replaceState(null, '', '#' + h.toString());
+}
+function readHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (!h.get('f')) return null;
+  // 網址可能被手改或貼壞:不合法的值當成沒填,不要讓整頁白掉
+  const nums = (k, n) => { const a = h.get(k) ? h.get(k).split(',').map(Number) : null; return a && a.length === n && a.every(Number.isFinite) ? a : null; };
+  let idx = {};
+  try { idx = h.get('i') ? JSON.parse(h.get('i')) : {}; } catch { idx = {}; }
+  if (!idx || typeof idx !== 'object' || Array.isArray(idx)) idx = {};
+  const qa = h.get('q'), qn = qa === null ? null : Number(qa);
+  return {
+    file: h.get('f'), group: h.get('g') || '', variable: h.get('v'), idx,
+    box: nums('b', 4),
+    cmap: CS_NAMES.includes(h.get('c')) ? h.get('c') : null, range: nums('r', 2),
+    log: h.get('l') === '1', qa: qn !== null && qn >= 0 && qn <= 1 ? qa : null, proj: ['plate', 'ortho'].includes(h.get('p')) ? h.get('p') : null,
+    pc: nums('pc', 3), pe: nums('pe', 4),
+    crev: h.get('cr') === '1', unit: h.get('u'), cj: h.get('cj'), cm: h.get('cm'), cg: h.get('cg'),
+    cb: nums('cb', 4),
+  };
+}
+const CS_NAMES = [...document.querySelectorAll('#cmap option')].map(o => o.value);
+
+// ---------------------------------------------------------------- 側欄:資料夾 + 搜尋
+async function openDir(path) {
+  if (!navAuto) navFwd.length = 0;   // 自己點進別的資料夾:返回的紀錄作廢
+  let d;
+  try { d = await api('/api/ls', { path }, { quiet: true }); }
+  catch (e) { showError(e); if (path) return openDir(null); return; }   // 打不開就回根目錄,不要停在空白
+  if (!S.roots) { try { S.roots = (await api('/api/ls', {}, { quiet: true })).dirs.map(x => x.path); } catch { S.roots = []; } }
+  S.dir = d;
+  if (d.path) S.files = d.files.map(f => f.path);
+  renderCrumb();
+  sideMode('dir');
+  $('search').hidden = !d.path;
+  renderDir();
+  deepSearch();   // 搜尋框還有字時換了資料夾:改在新的資料夾底下找
+}
+// 側欄上方的搜尋框:在資料夾裡篩檔名/日期,打開檔案後篩變數
+function sideMode(m) {
+  $('tabs').hidden = !(S.file && S.info);
+  $('tabFiles').classList.toggle('on', m === 'dir');
+  $('tabVars').classList.toggle('on', m === 'file');
+  if (S.sideMode === m) return;
+  S.sideMode = m;
+  $('search').value = '';
+  $('search').placeholder = m === 'dir' ? '搜尋檔名或日期,含子資料夾(例如 2026-01-02)' : '篩選變數(名稱或說明,例如 no2)';
+}
+function renderDir() {
+  const d = S.dir, side = $('side');
+  sideMode('dir');
+  const q = $('search').value.trim().toLowerCase();
+  const match = n => !q || n.toLowerCase().includes(q);
+  side.innerHTML = '';
+  if (!d.path) renderRecent(side);   // 根目錄:最近開過的檔
+  if (!d.path && !d.dirs.length)     // App 版:還沒選任何資料夾(只讀使用者選的地方,macOS 不會一直跳權限詢問)
+    side.append(Object.assign(document.createElement('div'), { className: 'hint', style: 'padding:16px 14px;color:var(--muted);font-size:13px;line-height:1.6',
+      textContent: '還沒有開啟任何資料夾。用選單「檔案 › 開啟…」(⌘O)選一個資料夾或檔案。' }));
+  if (d.parent) side.append(item('↑', '..', '', () => { $('search').value = ''; openDir(d.parent); }));
+  const dirs = d.dirs.filter(x => match(x.name)), files = d.files.filter(x => match(x.name + ' ' + (x.start || '') + ' ' + (x.date || '')));
+  if (dirs.length) side.append(sec('資料夾'));
+  dirs.forEach(x => side.append(item('▸', x.name, '', () => { $('search').value = ''; openDir(x.path); })));
+  const passNote = canPass() ? ' · ● = 在目前地圖範圍內有資料'
+    : (S.variable && S.data?.geo && d.files.some(f => f.orbit) ? ' · 放大到一個區域後,會用 ● 標出經過那裡的軌道' : '');
+  if (d.files.length) side.append(sec((q ? `檔案(${files.length} / ${d.files.length})` : `檔案(${d.files.length})`) + passNote, LEGEND_FILES));
+  const names = d.files.map(f => f.name);
+  files.forEach(x => {
+    // 有觀測時間(S5P、GEMS、MODIS)就用時間當主標,軌道與檔名放第二行
+    const lab = x.start ? `${x.start} UTC` : x.tile ? `${x.date} · ${x.tile}` : null;
+    const sub = lab ? [x.orbit ? `軌道 ${x.orbit}` : '', x.proc, x.mode, x.name].filter(Boolean).join(' · ') : '';
+    const el = item('◆', lab || x.name, fmtSize(x.size), () => openFile(x.path), x.path === S.file, x.name, sub);
+    el.dataset.path = x.path;
+    if (!lab) { const f = el.querySelector('[data-full]'); const k = distinctPart(names, names.indexOf(x.name)); f.dataset.a = k[0]; f.dataset.b = k[1]; }
+    side.append(el);
+    paintPass(x.path);
+  });
+  // 子資料夾裡的檔(伺服器背景逐層掃描,掃到哪裡先顯示到哪裡;掃完的清單存成暫存檔,下次直接用)
+  const dp = S.deep && S.deep.q === q && S.deep.path === d.path ? S.deep : null;
+  const deep = dp ? dp.results.filter(x => x.rel !== '.') : [];
+  if (q && d.path) {
+    const scanning = !dp || dp.status === 'building';
+    const more = dp && dp.total > dp.results.length;
+    const note = scanning ? ` · 搜尋中,已掃描 ${dp ? dp.dirs : 0} 個資料夾…` : more ? ` · 只列前 ${deep.length} 個,請再加關鍵字` : '';
+    if (deep.length || scanning) side.append(sec(`子資料夾中的檔案(${deep.length})${note}`));
+    deep.forEach(x => {
+      const lab = x.start ? `${x.start} UTC` : x.tile ? `${x.date} · ${x.tile}` : x.name;
+      const sub = [x.rel + '/', x.orbit ? `軌道 ${x.orbit}` : '', x.proc, x.mode, lab === x.name ? '' : x.name].filter(Boolean).join(' · ');
+      const el = item('◇', lab, fmtSize(x.size), () => openFile(x.path), x.path === S.file, x.path, sub);
+      el.dataset.path = x.path;
+      side.append(el);
+    });
+  }
+  fitNames();
+  markPasses();
+  if (!dirs.length && !files.length && !deep.length && d.path && !(q && (!dp || dp.status === 'building')))
+    side.append(Object.assign(document.createElement('div'), { className: 'item dim', textContent: q ? '這個資料夾與子資料夾裡都沒有符合的檔' : '(空的)' }));
+}
+let deepT = null, deepSeq = 0;
+function deepSearch() {
+  clearTimeout(deepT);
+  const q = $('search').value.trim().toLowerCase(), path = S.dir?.path;
+  const my = ++deepSeq;
+  if (!q || !path) { S.deep = null; return; }
+  const poll = async () => {
+    let r;
+    try { r = await api('/api/search', { path, q }, { quiet: true, timeout: 30000 }); } catch { return; }
+    if (my !== deepSeq) return;   // 已經改字或換資料夾
+    S.deep = { q, path, ...r };
+    renderDir();
+    if (r.status === 'building') deepT = setTimeout(poll, 700);
+  };
+  deepT = setTimeout(poll, 250);   // 打字時不要每個字都查
+}
+$('search').oninput = () => { if (S.sideMode === 'file') return filterVars(); renderDir(); deepSearch(); };
+// 搜尋時忽略收合,只看符合的;沒在搜尋時照每個群組的展開狀態
+function filterVars() {
+  const q = $('search').value.trim().toLowerCase();
+  let grp = null, shown = 0;
+  for (const el of $('side').children) {
+    if (el.classList.contains('grp')) { if (grp) grp.hidden = !!q && !shown; grp = el; shown = 0; continue; }
+    if (!el.dataset.var) continue;
+    const hit = !q || el.dataset.var.includes(q);
+    el.hidden = !hit || (!q && S.closedGroups.has(el.dataset.grp));
+    if (hit) shown++;
+  }
+  if (grp) grp.hidden = !!q && !shown;
+}
+// 群組收合:使用者點過的記在瀏覽器;沒點過的,METADATA 類、或沒有任何二維變數的群組預設收起
+const store = { get(k, d) { try { return JSON.parse(localStorage.getItem('ncglobe.' + k)) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem('ncglobe.' + k, JSON.stringify(v)); } catch { /* 私密視窗 */ } } };
+function groupCollapsed(gname, isMain) {
+  const pref = store.get('groups', {});
+  if (gname in pref) return pref[gname];
+  return !isMain;   // 沒點過的:只有主要群組(第一個有可畫二維變數的)預設展開
+}
+function toggleGroup(gname) {
+  const closed = !S.closedGroups.has(gname);
+  if (closed) S.closedGroups.add(gname); else S.closedGroups.delete(gname);
+  const pref = store.get('groups', {}); pref[gname] = closed; store.set('groups', pref);
+  const head = [...$('side').querySelectorAll('.grp')].find(h => h.dataset.grp === gname);
+  if (head) head.querySelector('.tw').textContent = closed ? '▸' : '▾';
+  filterVars(); fitNames();
+}
+// 最近開啟:檔案 + 當時看的變數,最多 10 個
+function rememberRecent() {
+  if (!S.file || !S.variable) return;
+  const list = store.get('recent', []).filter(r => r.path !== S.file);
+  list.unshift({ path: S.file, group: S.group, variable: S.variable, label: S.fileLabel || '' });
+  store.set('recent', list.slice(0, 10));
+}
+function renderRecent(side) {
+  const list = store.get('recent', []);
+  if (!list.length) return;
+  side.append(sec('最近開啟'));
+  const roots = S.roots || [];
+  for (const r of list) {
+    const name = r.path.split('/').pop();
+    // App 版只讀用「開啟」選過的資料夾:不在裡面的最近檔標灰,點了告訴他怎麼辦,不要丟 403
+    const ok = !roots.length || roots.some(x => r.path === x || r.path.startsWith(x.replace(/\/$/, '') + '/'));
+    const open = ok ? () => openFile(r.path, { group: r.group, variable: r.variable })
+      : () => showError(`「${name}」不在目前開啟的資料夾裡。用選單「檔案 › 開啟…」(⌘O)選它所在的資料夾(${parentOf(r.path)}),或直接選這個檔。`);
+    const el = item('◷', r.label || name, '', open, false,
+      ok ? `${r.path}\n變數:${r.variable}` : `${r.path}\n不在目前開啟的資料夾裡:先用 ⌘O 開啟它所在的資料夾`,
+      [r.label ? name : '', r.variable, ok ? '' : '需要先開啟資料夾'].filter(Boolean).join(' · '));
+    if (!ok) el.classList.add('dim');
+    side.append(el);
+  }
+}
+// 側欄檔案旁的 ●:這個檔經過目前畫面的範圍(後端用粗略的經緯度取樣判斷,一次問 4 個檔)
+const viewBox = () => {
+  if (S.lastRange || S.bbox) return S.lastRange || S.bbox;
+  const fl = $('plot')._fullLayout;
+  if (S.data?.geo && !isProj() && fl?.xaxis?.range) { const [a, b] = fl.xaxis.range, [c, d] = fl.yaxis.range; return [Math.min(a, b), Math.min(c, d), Math.max(a, b), Math.max(c, d)]; }
+  if (isProj() && S.pv?.proj === 'ortho' && S.pv.alt < 1.2) { const h = S.pv.alt / 0.044; return [S.pv.clon - h * 1.5, S.pv.clat - h, S.pv.clon + h * 1.5, S.pv.clat + h]; }
+  return null;
+};
+// 畫面太大(例如一整軌從南極到北極)時,相鄰幾軌都會碰到,標了反而誤導:只在放大到一個區域時才標
+const PASS_MAX_SPAN = 60;
+const passSpan = () => { const b = viewBox(); return b ? Math.max(b[2] - b[0], b[3] - b[1]) : Infinity; };
+const canPass = () => !!(S.variable && S.data?.geo && viewBox() && S.dir?.files?.length && passSpan() <= PASS_MAX_SPAN);
+let passSeq = 0;
+async function markPasses() {
+  if (!canPass()) return;   // 畫面太大:圖示維持 ◆
+  const box = viewBox().map(v => +v.toFixed(2));
+  const key = `${S.group}/${S.variable}/${box}`;
+  if (S.passKey !== key) { S.passKey = key; S.passes = {}; }
+  const my = ++passSeq;
+  const todo = S.dir.files.map(f => f.path).filter(p => !(p in S.passes));
+  for (let i = 0; i < todo.length; i += 4) {
+    let r;
+    try { r = await api('/api/passes', { files: JSON.stringify(todo.slice(i, i + 4)), group: S.group, var: S.variable, bbox: JSON.stringify(box) }, { quiet: true, timeout: 60000 }); }
+    catch { return; }
+    if (my !== passSeq) return;
+    for (const [p, v] of Object.entries(r)) { S.passes[p] = v; paintPass(p); }
+  }
+}
+function paintPass(path) {
+  const v = S.passes?.[path];
+  const el = [...$('side').querySelectorAll('.item[data-path]')].find(e => e.dataset.path === path);
+  if (!el) return;
+  const ic = el.querySelector('.ic');
+  ic.textContent = v === true ? '●' : v === false ? '○' : '◆';
+  ic.classList.toggle('pass', v === true);
+  ic.title = v === true ? '這個檔在目前地圖範圍內有資料(地圖上畫的仍是目前打開的那一個檔)' : v === false ? '這個檔在目前地圖範圍內沒有資料' : '';
+}
+// 檔名裡跟前後鄰居不一樣的那一段(era5_sfc_multi_variable_merged_【2022…】.nc):放不下時先省略頭尾,留這段
+const _pk = new Map();
+function distinctPart(names, i) {
+  const n = names[i], nb = [names[i - 1], names[i + 1]].filter(Boolean);
+  if (!nb.length) return [0, n.length];
+  const lcp = m => { let k = 0; while (k < n.length && n[k] === m[k]) k++; return k; };
+  const lcs = m => { let k = 0; while (k < n.length && n[n.length - 1 - k] === m[m.length - 1 - k]) k++; return k; };
+  // 開頭的共同部分看「同一種產品的所有檔」,不只看前後兩個:同一年的相鄰檔只差時段,年份會被當成共同部分切掉
+  const key = m => { if (!_pk.has(m)) _pk.set(m, productKey(m)); return _pk.get(m); };
+  const same = names.filter(m => m !== n && key(m) === key(n));
+  let a = same.length ? Math.min(...same.map(lcp)) : Math.max(...nb.map(lcp)), b = n.length - Math.max(...nb.map(lcs));
+  a = Math.max(0, n.lastIndexOf('_', a - 1) + 1);            // 從分隔字元開始,不要切在字中間
+  const nx = n.slice(b).search(/[_.]/);
+  b = nx < 0 ? n.length : b + nx;
+  return b > a ? [a, b] : [0, n.length];
+}
+// 麵包屑:每一層都能點
+function renderCrumb() {
+  const c = $('crumb');
+  c.innerHTML = '';
+  const link = (t, fn) => { const b = Object.assign(document.createElement('button'), { textContent: t }); b.onclick = fn; return b; };
+  c.append(link('根目錄', () => openDir(null)));
+  const p = S.dir?.path;
+  if (!p) return;
+  const root = (S.roots || []).filter(r => p === r || p.startsWith(r + '/')).sort((a, b) => b.length - a.length)[0];
+  if (!root) { c.append(' / ' + p); return; }
+  c.append(' / ', link(root, () => openDir(root)));
+  let acc = root;
+  for (const seg of p.slice(root.length).split('/').filter(Boolean)) {
+    acc += '/' + seg;
+    const to = acc;
+    c.append(' / ', link(seg, () => openDir(to)));
+  }
+}
+// 名稱從中間省略到剛好放得下(只靠 CSS 會從尾巴截,S5P 長變數名全變成同一個開頭)
+function squeeze(full, n, a, b) {   // 長度 n 以內,盡量保留 full[a:b]
+  const mid = full.slice(a, b);
+  if (mid.length + 2 >= n) return midTrunc(mid, n);
+  const room = n - mid.length, pre = full.slice(0, a), post = full.slice(b);
+  const hp = Math.min(pre.length, Math.ceil(room / 2)), hs = Math.min(post.length, room - hp);
+  // 前段保留「開頭」(產品名稱 GEMS_、S5P_…),省略的是開頭與不同部分之間的共同段落
+  return (hp < pre.length ? pre.slice(0, Math.max(hp - 1, 1)) + '…' : pre) + mid + (hs < post.length ? post.slice(0, Math.max(hs - 1, 0)) + '…' : post);
+}
+function fitNames() {
+  for (const el of $('side').querySelectorAll('[data-full]')) {
+    const full = el.dataset.full;
+    const a = el.dataset.a !== undefined ? +el.dataset.a : null, b = el.dataset.b !== undefined ? +el.dataset.b : null;
+    let n = full.length;
+    el.firstChild.textContent = full;
+    while (el.scrollWidth > el.clientWidth + 1 && n > 10) {
+      n -= 2;
+      el.firstChild.textContent = a !== null && b > a ? squeeze(full, n, a, b) : midTrunc(full, n);
+    }
+  }
+}
+// 字型晚到或側欄寬度改變時,量到的寬度會變:重新算
+document.fonts?.ready.then(() => fitNames());
+{ let t; new ResizeObserver(() => { clearTimeout(t); t = setTimeout(fitNames, 100); }).observe($('side')); }
+function sec(t, title = '') { return Object.assign(document.createElement('div'), { className: 'sec', textContent: t, title }); }
+const LEGEND_VARS = '★ 常用(這種產品最常看的)· ▦ 二維以上,可以畫成地圖 · ∿ 一維(座標、時間)· 灰色 = 不能畫(文字、太大或沒有數值)';
+const LEGEND_FILES = '◆ 這個資料夾的檔 · ◇ 子資料夾裡的檔(搜尋時)· ◷ 最近開啟 · ● 在目前地圖範圍內有資料';
+function item(icon, name, meta, onclick, sel = false, title = '', sub = '') {
+  const b = document.createElement('button');
+  b.className = 'item' + (sel ? ' sel' : '');
+  b.title = title || name;
+  b.innerHTML = `<span class="ic">${icon}</span><span class="nm"><span data-full="${esc(name)}">${esc(name)}</span>${sub ? `<span class="sub"><span data-full="${esc(sub)}">${esc(sub)}</span></span>` : ''}</span><span class="meta">${esc(meta)}</span>`;
+  if (onclick) b.onclick = onclick;
+  return b;
+}
+
+// ---------------------------------------------------------------- 檔案結構
+// 打開檔案時自動畫哪個變數:先找看起來是主要產品的(柱量、AOD…),避開經緯度、時間、角度、旗標
+const META_VAR = /^(lat|lon|latitude|longitude|time|delta_time|qa_value)$|time|scan|zenith|azimuth|angle|flag|quality|mask|land_sea|elevation|altitude|_bounds$|precision|uncertainty|error/i;
+const MAIN_VAR = /column|aod|optical_depth|no2|so2|hcho|o3|ozone|ch4|methane|\bco\b|carbon|aerosol|pm2|t2m|temperature|precip/i;
+// 各產品最常看的變數(依常用程度排):側欄最上面的「常用」,開檔時的預設變數也是其中第一個有的
+const COMMON_VARS = [
+  // Sentinel-5P L2
+  ['nitrogendioxide_tropospheric_column', 'NO₂ 對流層柱'], ['nitrogendioxide_total_column', 'NO₂ 總柱'],
+  ['ozone_total_vertical_column', 'O₃ 總柱'], ['formaldehyde_tropospheric_vertical_column', 'HCHO 對流層柱'],
+  ['sulfurdioxide_total_vertical_column', 'SO₂ 總柱'], ['carbonmonoxide_total_column', 'CO 總柱'],
+  ['carbonmonoxide_total_column_corrected', 'CO 總柱(校正)'], ['methane_mixing_ratio_bias_corrected', 'CH₄ 混合比(偏差校正)'],
+  ['aerosol_index_354_388', '紫外氣膠指數 354/388'], ['aerosol_index_340_380', '紫外氣膠指數 340/380'],
+  // GEMS
+  ['ColumnAmountNO2Trop', 'NO₂ 對流層柱'], ['ColumnAmountNO2', 'NO₂ 總柱(多為平流層)'], ['ColumnAmountNO2Strat', 'NO₂ 平流層柱'],
+  ['ColumnAmountO3', 'O₃ 總柱'], ['FinalAerosolOpticalDepth', '氣膠光學厚度'], ['UVAerosolIndex', '紫外氣膠指數'],
+  // MODIS
+  ['Optical_Depth_055', 'AOD 550 nm'], ['Optical_Depth_047', 'AOD 470 nm'],
+  ['AOD_550_Dark_Target_Deep_Blue_Combined', 'AOD 550 nm(DT+DB 合併)'], ['Optical_Depth_Land_And_Ocean', 'AOD 550 nm(陸+海)'],
+  ['Deep_Blue_Aerosol_Optical_Depth_550_Land_Best_Estimate', 'AOD 550 nm(Deep Blue)'],
+  // 統一 L3 年檔(Satellite_S5P)
+  ['no2', 'NO₂'], ['o3', 'O₃'], ['hcho', 'HCHO'], ['so2', 'SO₂'], ['co', 'CO'], ['ch4', 'CH₄'], ['aod', 'AOD'],
+  // ERA5
+  ['t2m', '2 m 氣溫'], ['d2m', '2 m 露點'], ['u10', '10 m 東西風'], ['v10', '10 m 南北風'], ['blh', '邊界層高度'],
+  ['sp', '地面氣壓'], ['msl', '海平面氣壓'], ['tp', '總降水'],
+  ['t', '氣溫'], ['u', '東西風'], ['v', '南北風'], ['r', '相對濕度'], ['z', '重力位'],
+];
+const COMMON_MAX = 6;
+// 地圖標題:有中文常用名就用它當主標,英文全名縮小放後面(側欄寫「NO₂ 對流層柱」,標題卻是一長串英文)
+function titleHtml(d, unit) {
+  const c = COMMON_VARS.find(([n]) => n === d.name);
+  return c ? `${esc(c[1])}<span class="u">${esc(unit)}</span><span class="u" style="font-size:12px">· ${esc(d.long_name || d.name)}</span>`
+           : `${esc(d.long_name)}<span class="u">${esc(unit)}</span>`;
+}
+// want:{group, variable, keep} —— 換檔時沿用同一個變數、視野、維度位置
+async function openFile(path, want = null) {
+  stopPlay();
+  leaveComposite(false);
+  let info;
+  try { info = await api('/api/info', { file: path }); }
+  catch (e) { return e.cancelled ? showCancelled(() => openFile(path, want)) : showError(e); }
+  S.file = path; S.info = info; S.fileLabel = null;
+  if (!S.dir?.path || parentOf(path) !== S.dir.path) await openDir(parentOf(path));
+  const { first, wanted } = renderFileSide(want);
+  setFileName();
+  updateFileNav();
+  const target = wanted || first?.slice(0, 3);
+  if (target) await openVar(...target, wanted ? want.keep : null);
+  else { $('empty').hidden = false; $('empty').textContent = '這個檔沒有可以畫的數值變數'; }
+}
+// 側欄顯示目前這個檔的變數(用已讀到的 S.info,不重新讀檔);回傳預設要畫的變數
+function renderFileSide(want = null) {
+  const path = S.file, info = S.info;
+  const side = $('side');
+  side.innerHTML = '';
+  sideMode('file');
+  $('search').hidden = false;
+  side.append(sec(midTrunc(path.split('/').pop(), 48)));
+  let first = null, wanted = null;
+  const mainGroup = info.groups.find(g => g.variables.some(v => v.plottable && v.shape.length >= 2))?.group;
+  // 常用:這個檔裡有、能畫成圖的那幾個,照 COMMON_VARS 的順序(同名出現在多個群組時取第一個)
+  const where = new Map();
+  for (const g of info.groups) for (const v of g.variables)
+    if (v.plottable && v.shape.length >= 2 && !where.has(v.name)) where.set(v.name, [g.group, v]);
+  const common = COMMON_VARS.filter(([n]) => where.has(n)).slice(0, COMMON_MAX);
+  if (common.length) {
+    side.append(sec('常用', LEGEND_VARS));
+    for (const [n, label] of common) {
+      const [g, v] = where.get(n);
+      const el = item('★', label, v.shape.join('×'), null, g === S.group && n === S.variable,
+        `${n}\n${v.long_name || ''}${v.units ? ' [' + v.units + ']' : ''}`, g && g !== mainGroup ? `${g}/${n}` : n);
+      el.dataset.var = `${n} ${label} ${v.long_name || ''}`.toLowerCase();
+      el.onclick = () => openVar(g, n, el);
+      side.append(el);
+      if (!first) first = [g, n, el, 3];   // 預設變數:常用裡的第一個
+    }
+    side.append(sec('全部變數', LEGEND_VARS));
+  }
+  for (const g of info.groups) {
+    // 二維以上(地圖、陣列)排前面,scanline、time 這類一維座標放後面:要畫的東西不被擠到下面
+    const vars = g.variables.filter(v => v.shape.length >= 1)
+      .map((v, i) => [v, i]).sort((a, b) => (b[0].shape.length >= 2) - (a[0].shape.length >= 2) || a[1] - b[1]).map(x => x[0]);
+    if (!vars.length) continue;
+    const gname = g.group || '/';
+    const hasCur = g.group === S.group && vars.some(v => v.name === S.variable);
+    const open = hasCur || !groupCollapsed(gname, g.group === mainGroup);
+    const gh = Object.assign(document.createElement('div'), { className: 'grp' });
+    gh.dataset.grp = gname;
+    gh.innerHTML = `<span class="tw">${open ? '▾' : '▸'}</span><span>${esc(gname)}</span><span class="cnt">${vars.length}</span>`;
+    gh.onclick = () => toggleGroup(gname);
+    side.append(gh);
+    if (!open) S.closedGroups.add(gname); else S.closedGroups.delete(gname);
+    // S5P 一組裡十幾個變數都以 nitrogendioxide_ 開頭:三個以上共用同一個開頭字時拿掉它,能區分的部分才看得到
+    const head = n => n.split('_')[0];
+    const heads = {};
+    for (const v of vars) heads[head(v.name)] = (heads[head(v.name)] || 0) + 1;
+    const shown = n => head(n).length >= 10 && heads[head(n)] >= 3 && n.length > 24 ? '…' + n.slice(head(n).length) : n;
+    for (const v of vars) {
+      const ok = v.plottable;
+      const el = item(v.shape.length >= 2 ? '▦' : '∿', shown(v.name), v.shape.join('×'), null, false,
+        `${v.name}\n${v.long_name || ''}${v.units ? ' [' + v.units + ']' : ''}\n(${v.dims.join(', ')})`);
+      el.dataset.var = `${v.name} ${v.long_name || ''}`.toLowerCase();
+      el.dataset.grp = gname;
+      if (g.group === S.group && v.name === S.variable) el.classList.add('sel');
+      if (ok) el.onclick = () => openVar(g.group, v.name, el); else el.classList.add('dim');
+      side.append(el);
+      if (want && g.group === want.group && v.name === want.variable && ok) wanted = [g.group, v.name, el];
+      if (ok && v.shape.length >= 2 && !META_VAR.test(v.name)) {
+        const score = MAIN_VAR.test(v.name + ' ' + (v.long_name || '')) ? 2 : 1;
+        if (!first || score > first[3]) first = [g.group, v.name, el, score];
+      }
+    }
+  }
+  filterVars();   // 換檔後篩選框若還有字,清單要照著篩
+  fitNames();
+  return { first, wanted };
+}
+// 在側欄逛到別的資料夾後,回到正在畫的這個檔:資料夾清單換回它所在的資料夾,側欄列它的變數
+async function backToFile() {
+  if (!S.file || !S.info) return;
+  if (S.dir?.path !== parentOf(S.file)) await openDir(parentOf(S.file));
+  renderFileSide();
+}
+// 上一層 / 返回(滑鼠側鍵、App 的 ⌘[ ⌘]):像檔案總管。變數 → 這個檔的資料夾 → 上一層資料夾;
+// 返回 = 回到剛剛離開的那一層。自己點進別的資料夾時,返回的紀錄就清掉。
+const navFwd = [];
+let navAuto = false;
+async function navUp() {
+  if (S.sideMode === 'file' && S.file) { navFwd.push({ file: true }); navAuto = true; try { await $('tabFiles').onclick(); } finally { navAuto = false; } return; }
+  const d = S.dir;
+  if (!d?.path) return;
+  navFwd.push({ dir: d.path });
+  $('search').value = '';
+  navAuto = true; try { await openDir(d.parent); } finally { navAuto = false; }
+}
+async function navForward() {
+  const t = navFwd.pop();
+  if (!t) return;
+  navAuto = true;
+  try { if (t.file) await backToFile(); else { $('search').value = ''; await openDir(t.dir); } } finally { navAuto = false; }
+}
+window.ncglobeNav = dir => (dir === 'back' ? navUp() : navForward());   // App(macapp.py)接側鍵與選單後呼叫
+// 瀏覽器裡的滑鼠側鍵(button 3 = 上一頁、4 = 下一頁):攔下預設的「離開這一頁」,改成上一層 / 返回
+for (const t of ['mousedown', 'mouseup', 'auxclick']) window.addEventListener(t, e => {
+  if (e.button !== 3 && e.button !== 4) return;
+  e.preventDefault();
+  if (t === 'mouseup') e.button === 3 ? navUp() : navForward();
+});
+$('fileName').onclick = backToFile;
+$('tabVars').onclick = backToFile;
+$('tabFiles').onclick = async () => {
+  if (S.file && S.dir?.path !== parentOf(S.file)) await openDir(parentOf(S.file));   // 回到這個檔所在的資料夾
+  else renderDir();
+};
+// 側欄收起/展開、拖曳調寬(都記在瀏覽器)
+function setSide(on) {
+  document.body.classList.toggle('side-off', !on);
+  store.set('sideOff', !on);
+  window.dispatchEvent(new Event('resize'));
+}
+$('sideOpen').onclick = () => setSide(true);
+{
+  const w = store.get('sideW', null);
+  if (w) document.body.style.setProperty('--side-w', w + 'px');
+  if (store.get('sideOff', false)) document.body.classList.add('side-off');
+  const h = $('sideResize');
+  h.addEventListener('pointerdown', e => {
+    e.preventDefault(); h.setPointerCapture(e.pointerId); h.classList.add('drag');
+    const move = ev => document.body.style.setProperty('--side-w', Math.round(Math.min(640, Math.max(220, ev.clientX))) + 'px');
+    const up = () => {
+      h.classList.remove('drag'); h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up);
+      store.set('sideW', parseInt(getComputedStyle(document.body).getPropertyValue('--side-w')) || 340);
+      fitNames(); window.dispatchEvent(new Event('resize'));
+    };
+    h.addEventListener('pointermove', move); h.addEventListener('pointerup', up);
+  });
+  h.addEventListener('dblclick', () => { document.body.style.removeProperty('--side-w'); store.set('sideW', null); fitNames(); window.dispatchEvent(new Event('resize')); });
+}
+$('fileName').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); backToFile(); } };
+function setFileName() {
+  const fm = S.dir?.files?.find(f => f.path === S.file);
+  if (fm) S.fileLabel = obsLabel(fm);   // 記下來:逛到別的資料夾時查不到這個檔的觀測時間
+  $('fileName').textContent = S.fileLabel || midTrunc(S.file.split('/').pop(), 50);
+  $('fileName').title = `${S.file.split('/').pop()}\n點一下:側欄回到這個檔的變數`;
+}
+function updateFileNav() {
+  const i = S.files.indexOf(S.file);
+  $('prevFile').disabled = i <= 0;
+  $('nextFile').disabled = i < 0 || i >= S.files.length - 1;
+}
+function stepFile(delta) {
+  const i = S.files.indexOf(S.file);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= S.files.length) return;
+  // step:逐軌翻找時刻意不自動跳開 —— 「這軌沒經過」本身就是答案
+  openFile(S.files[j], { group: S.group, variable: S.variable, keep: { box: S.lastRange || S.bbox, idx: { ...S.idx }, step: true } });
+}
+$('prevFile').onclick = () => stepFile(-1);
+$('nextFile').onclick = () => stepFile(1);
+
+// ---------------------------------------------------------------- 變數
+async function openVar(group, name, el, keep = null) {
+  stopPlay();
+  leaveComposite(false);
+  document.querySelectorAll('#side .item.sel').forEach(x => x.classList.remove('sel'));
+  el?.classList.add('sel');
+  let d;
+  try { d = await api('/api/var', { file: S.file, group, var: name }); } catch (e) { return showError(e); }
+  // 離開前記住:地圖視野(切到非地圖變數再切回來不會重設)、這個變數手動設的色階範圍
+  // 記在「畫出這個變數的檔」名下:openFile 已經先把 S.file 換成新檔了
+  if (S.detail?.geo) S.geoView = { file: S.detailFile, box: S.lastRange || S.bbox, pv: S.pv };
+  if (S.variable) S.varMem[S.group + '/' + S.variable] = S.manualRange ? [$('vmin').value, $('vmax').value, UNIT().label] : null;
+  d.units = cleanUnits(d.units);
+  setupUnits(d);
+  S.group = group; S.variable = name; S.detail = d; S.detailFile = S.file;
+  S.idx = {}; S.outlines = null; S.image = null;
+  if (keep) {   // 換檔:同名維度、長度沒超過就沿用位置;視野也沿用
+    for (const e of d.extra_dims || []) if (keep.idx?.[e.dim] !== undefined) S.idx[e.dim] = Math.min(keep.idx[e.dim], e.size - 1);
+    S.bbox = keep.box || null; S.lastRange = keep.box || null;
+  } else {
+    const gv = d.geo && S.geoView?.file === S.file ? S.geoView : null;   // 只在同一個檔裡沿用;開新檔看它自己的範圍
+    S.bbox = gv?.box || null; S.lastRange = gv?.box || null;
+    if (gv?.pv) S.pv = gv.pv; else if (S.pv) S.pv.extent = null;
+    let mem = S.varMem[group + '/' + name];
+    if (mem && mem[2] !== undefined && mem[2] !== UNIT().label) mem = null;   // 記住的範圍是別的單位:不套
+    S.manualRange = !!mem;
+    if (mem) { $('vmin').value = mem[0]; $('vmax').value = mem[1]; }
+  }
+  $('bar1').hidden = $('bar2').hidden = false;
+  S.unitPrev = { a: UNIT().a, b: UNIT().b };
+  $('title').innerHTML = titleHtml(d, UNIT().label);
+  $('compBtn').disabled = !d.geo;
+  $('title').title = `${d.long_name} [${d.units || ''}] — ${d.name}`;
+  $('qaBox').hidden = !d.has_qa;
+  $('geoBox').hidden = $('quickBox').hidden = !d.geo;
+  $('proj').disabled = !d.geo;   // 非地圖變數一律畫熱圖,但不改選單:切回地圖變數時還是原本的檢視
+  $('note').hidden = !d.note; $('note').textContent = d.note || '';
+  S.autoFit = !keep?.step;   // 新打開的檔若在沿用的範圍裡沒資料,自動跳到資料範圍
+  renderDims(); renderAttrs(); closeInspector();
+  await loadSlice(!keep && !S.manualRange);
+  rememberRecent();
+}
+
+function renderDims() {
+  const box = $('dims');
+  box.innerHTML = '';
+  const extra = (S.detail.extra_dims || []).filter(e => e.size > 1);
+  $('helpPlay').hidden = !extra.length;   // 沒有時間等可播放的維度:不要寫「空白 播放」
+  box.hidden = !extra.length;
+  extra.forEach((e, k) => {
+    S.idx[e.dim] = S.idx[e.dim] ?? 0;
+    const wrap = document.createElement('div');
+    wrap.className = 'ctl';
+    const r = Object.assign(document.createElement('input'), { type: 'range', min: 0, max: e.size - 1, step: 1, value: S.idx[e.dim] });
+    const lab = Object.assign(document.createElement('span'), { className: 'dimlabel', textContent: e.labels[S.idx[e.dim]] });
+    let t;
+    r.oninput = () => { S.idx[e.dim] = +r.value; lab.textContent = e.labels[+r.value]; clearTimeout(t); t = setTimeout(() => loadSlice(false), 120); };
+    r.dataset.dim = e.dim;
+    const btn = (icon, title, fn) => { const b = Object.assign(document.createElement('button'), { className: 'btn ibtn', innerHTML: svg(icon), title }); b.setAttribute('aria-label', title); b.onclick = fn; return b; };
+    const prev = btn('left', '上一個(,)', () => stepDim(e.dim, -1));
+    const next = btn('right', '下一個(.)', () => stepDim(e.dim, 1));
+    const play = btn('play', '播放(空白鍵)', () => togglePlay(e.dim));
+    play.dataset.play = e.dim;
+    const speed = document.createElement('select');
+    speed.innerHTML = '<option value="1500">慢</option><option value="700">中</option><option value="250">快</option>';
+    speed.value = String(SET.speed || 700);
+    speed.dataset.speed = e.dim;
+    speed.title = '播放速度'; speed.setAttribute('aria-label', '播放速度');
+    const name = Object.assign(document.createElement('span'), { textContent: `${e.title || e.dim} ${e.size} 步`, title: `維度 ${e.dim},共 ${e.size} 個` });
+    r.setAttribute('aria-label', e.title || e.dim);
+    wrap.append(name, prev, r, next, lab, play, speed);
+    box.append(wrap);
+  });
+}
+function renderAttrs() {
+  const a = S.detail.attrs || {};
+  const keys = Object.keys(a);
+  $('attrs').hidden = !keys.length;
+  $('attrs').open = false;
+  const show = v => typeof v === 'number' ? fmtNum(v) : typeof v === 'object' ? JSON.stringify(v) : v;
+  $('attrTable').innerHTML = keys.map(k => `<tr><td>${esc(k)}</td><td>${esc(show(a[k]))}</td></tr>`).join('');
+}
+function dimInfo(dim) { return (S.detail.extra_dims || []).find(e => e.dim === dim); }
+function firstPlayDim() { return (S.detail?.extra_dims || []).find(e => e.size > 1)?.dim; }
+function setDim(dim, i) {
+  const e = dimInfo(dim); if (!e) return;
+  i = (i + e.size) % e.size;
+  S.idx[dim] = i;
+  const r = document.querySelector(`#dims input[data-dim="${CSS.escape(dim)}"]`);
+  if (r) { r.value = i; r.nextElementSibling.nextElementSibling.textContent = e.labels[i]; }
+}
+async function stepDim(dim, delta) { if (!dim) return; setDim(dim, S.idx[dim] + delta); await loadSlice(false); }
+
+// ---------------------------------------------------------------- 播放(預讀下一格)
+async function togglePlay(dim) {
+  if (S.playing) return stopPlay();
+  dim = dim || firstPlayDim();
+  if (!dim) return;
+  S.playing = dim;
+  document.querySelectorAll('#dims button[data-play]').forEach(b => { b.innerHTML = svg(b.dataset.play === dim ? 'stop' : 'play'); b.title = b.dataset.play === dim ? '停止(空白鍵)' : '播放(空白鍵)'; b.classList.toggle('on', b.dataset.play === dim); });
+  while (S.playing === dim) {
+    const t0 = performance.now();
+    setDim(dim, S.idx[dim] + 1);
+    try { await loadSlice(false, { playing: true }); } catch { break; }
+    prefetch(dim);
+    const wait = +(document.querySelector(`#dims select[data-speed="${CSS.escape(dim)}"]`)?.value || 700);
+    await new Promise(res => setTimeout(res, Math.max(0, wait - (performance.now() - t0))));
+  }
+}
+function stopPlay() {
+  S.playing = false;
+  document.querySelectorAll('#dims button[data-play]').forEach(b => { b.innerHTML = svg('play'); b.title = '播放(空白鍵)'; b.classList.remove('on'); });
+}
+function prefetch(dim) {
+  const e = dimInfo(dim); if (!e) return;
+  const idx = { ...S.idx, [dim]: (S.idx[dim] + 1) % e.size };
+  api('/api/slice', sliceParams(idx), { cache: true, quiet: true }).catch(() => {});
+}
+
+// ---------------------------------------------------------------- 讀切片 / 畫
+// 平面地圖多抓/多畫畫面外一圈(四周各半個畫面):平移時周圍已經有圖,不用等放手後才補上
+const PAD = 0.5;
+function sliceParams(idx = S.idx) {
+  return { file: S.file, group: S.group, var: S.variable, idx: JSON.stringify(idx),
+           bbox: S.bbox ? JSON.stringify(S.bbox) : null, pad: S.bbox ? PAD : null, qa: currentQa() };
+}
+// 同一張圖只換了視野時沿用舊影像,新的畫好再換上;換檔、時間、qa、色階才清掉
+const imageKey = () => JSON.stringify([S.file, S.group, S.variable, S.idx, currentQa(), natRange(), cmapName(), $('log').checked]);
+function currentQa() { return S.detail?.has_qa && $('qa').value !== '' ? $('qa').value : null; }
+
+async function loadSlice(resetRange, opt = {}) {
+  const seq = ++reqSeq;
+  let data;
+  try {
+    data = S.composite
+      ? await api('/api/composite/slice', { id: S.composite.id, bbox: S.bbox ? JSON.stringify(S.bbox) : null,
+                                             mode: $('compMode').value, res: $('compRes').value || null }, { cache: true })
+      : await api('/api/slice', sliceParams(), { cache: true });
+  } catch (e) {
+    if (seq === reqSeq) { if (e.cancelled) showCancelled(() => loadSlice(resetRange)); else showError(e); }
+    if (opt.playing) throw e;
+    return;
+  }
+  if (seq !== reqSeq) return;
+  const swap = opt.playing && canSwapGrid(S.data, data);
+  S.data = data;
+  $('empty').hidden = true;
+  const empty = data.geo && !S.composite && (data.stats?.count === 0 || data.stats?.min === null);
+  if (S.autoFit && empty && (S.bbox || S.lastRange)) { S.autoFit = false; S.bbox = null; S.lastRange = null; return loadSlice(true, opt); }
+  S.autoFit = false;
+  noDataHint(data);
+  if (swap) { swapGrid(); saveHash(); return; }
+  if (data.geo && ($('coast').checked || $('borders').checked) && $('proj').value === 'plate') {
+    const box = S.bbox || dataBox(data);
+    try { S.outlines = await api('/api/outlines', { bbox: JSON.stringify(box), ly: layersParam() }, { cache: true, quiet: true }); } catch { S.outlines = null; }
+    if (seq !== reqSeq) return;
+  } else S.outlines = null;
+  // 播放中、縮放平移(opt.view)時色階範圍固定:播放時每格各自自動,同一個顏色在不同時間代表不同數值;
+  // 縮放時每放一下就重算,整張圖跟色階條一直重畫會卡。要依目前畫面重算按「自動」。
+  if (resetRange || (!S.manualRange && !opt.playing && !opt.view)) applyAuto('p', false);
+  S.sliceView = S.bbox ? [...S.bbox] : null;   // 這份資料是依哪個畫面抓的(含外圍 PAD)
+  await ensureColorscale();
+  if (seq !== reqSeq) return;
+  if (isProj()) { await drawProjected(seq); saveHash(); return; }
+  // 換了資料(檔、變數、時間、qa)才清掉舊影像;只是視野或色階變了,舊圖先留著,新的畫好再換上
+  const dataOf = k => JSON.stringify(JSON.parse(k).slice(0, 5));
+  if (S.image && dataOf(S.imageKey) !== dataOf(imageKey())) S.image = null;
+  draw();
+  if (data.kind === 'swath') await renderImage(seq);
+  saveHash();
+  // 換時間、換檔、qa 之後,點選面板要跟著畫面:同一點重查(播放時不查,太頻繁)
+  if (!opt.playing && S.lastClick && !$('insp').hidden) inspect(...S.lastClick, true);
+}
+
+// 視野內沒有任何值:講清楚,給一個按鈕跳到有資料的地方(新手會以為檔案壞了)
+function noDataHint(d) {
+  const empty = d && d.geo && (d.stats?.count === 0 || d.stats?.min === null || d.stats?.min === undefined);
+  $('nodata').hidden = !empty;
+  if (!empty) return;
+  const mode = S.composite ? $('compMode').value : '';
+  $('nodataText').textContent = mode === 'std' ? '這個範圍每一格最多只有 1 組資料;標準差至少要 2 組才算得出來。'
+    : S.composite ? '合成結果在這個範圍內沒有資料。' : '這個檔在目前的範圍內沒有有效資料(軌道沒經過,或全被 qa 篩掉)。';
+  $('nodataBtns').innerHTML = '';
+  if (mode !== 'std') {
+    const b = Object.assign(document.createElement('button'), { className: 'btn', textContent: '跳到資料範圍' });
+    b.onclick = () => { S.bbox = null; S.lastRange = null; loadSlice(!S.manualRange); };
+    $('nodataBtns').append(b);
+  }
+}
+function showCancelled(retry) {
+  $('nodata').hidden = false;
+  $('nodataText').textContent = '已取消讀取。';
+  $('nodataBtns').innerHTML = '';
+  const b = Object.assign(document.createElement('button'), { className: 'btn', textContent: '重試' });
+  b.onclick = () => { $('nodata').hidden = true; retry(); };
+  $('nodataBtns').append(b);
+}
+async function ensureColorscale() {
+  const c = cmapName();
+  if (!CS[c]) CS[c] = await api('/api/colorscale', { cmap: c }, { quiet: true });
+  return CS[c];
+}
+
+// 非規則網格:後端用 pcolormesh 畫成影像(每個像素一個四邊形,不留洞),貼在目前的視野上
+let renderSeq = 0;
+async function renderImage(seq) {
+  const fl = $('plot')._fullLayout;
+  if (!fl?.xaxis || S.data?.kind !== 'swath') return;
+  const my = ++renderSeq;
+  const [x0, x1] = fl.xaxis.range, [y0, y1] = fl.yaxis.range;
+  const view = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)];
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const need = fl.xaxis._length * dpr / (view[2] - view[0]);   // 需要的像素/度
+  // 已畫好的影像涵蓋整個畫面、解析度也夠(放大不超過 1.3 倍):沿用,不重畫
+  const im = S.image, key = imageKey();
+  if (im && S.imageKey === key && im.bbox[0] <= view[0] && im.bbox[1] <= view[1] && im.bbox[2] >= view[2] && im.bbox[3] >= view[3]
+      && im.pxPerDeg >= need / 1.3) { status(); return; }
+  const w0 = view[2] - view[0], h0 = view[3] - view[1];
+  const box = [Math.max(-180, view[0] - PAD * w0), Math.max(-90, view[1] - PAD * h0),
+               Math.min(180, view[2] + PAD * w0), Math.min(90, view[3] + PAD * h0)].map(v => +v.toFixed(4));
+  let r;
+  try {
+    r = await api('/api/render', {
+      file: S.file, group: S.group, var: S.variable, idx: JSON.stringify(S.idx), bbox: JSON.stringify(box),
+      qa: currentQa(), vmin: natRange()[0], vmax: natRange()[1], cmap: cmapName(),
+      log: $('log').checked ? 1 : 0, w: Math.round(need * (box[2] - box[0])),
+      h: Math.round(fl.yaxis._length * dpr / (view[3] - view[1]) * (box[3] - box[1])),
+    }, { cache: true });
+  } catch (e) { if (!e.cancelled) showError(e); return; }
+  if (my !== renderSeq || (seq !== undefined && seq !== reqSeq)) return;
+  r.pxPerDeg = need;
+  S.image = r;
+  S.imageKey = key;
+  S.renderStep = r.step;
+  Plotly.relayout($('plot'), { images: [imageSpec(r)] });
+  status();
+}
+// 規則經緯網格:顏色在瀏覽器裡畫成一張影像(layout.images),heatmap trace 透明、只負責滑鼠讀值與色階條。
+// 播放換格時只換這張影像(relayout images 只動那個 <image>);改 heatmap 的 z 會整張重建,
+// 座標軸、色階條、海岸線每一格都拆掉重畫,看起來整個地圖在閃。
+const LUT = {};
+function colorLut() {
+  const name = cmapName();
+  if (LUT[name]) return LUT[name];
+  const c = Object.assign(document.createElement('canvas'), { width: 256, height: 1 }), g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 256, 0);
+  for (const [t, col] of CS[name] || []) grad.addColorStop(t, col);
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 1);
+  return (LUT[name] = g.getImageData(0, 0, 256, 1).data);
+}
+function gridStep(v) {
+  if (v.length < 2 || v.some(a => a === null)) return null;
+  const s = (v[v.length - 1] - v[0]) / (v.length - 1);
+  for (let i = 1; i < v.length; i++) if (Math.abs(v[i] - v[i - 1] - s) > Math.abs(s) * 0.01) return null;   // 不等距:交給 Plotly 畫
+  return s || null;
+}
+function gridImage(d) {
+  if (!d.geo || d.kind !== 'heatmap' || !CS[cmapName()]) return null;
+  const sx = gridStep(d.x), sy = gridStep(d.y);
+  if (!sx || !sy) return null;
+  const nx = d.x.length, ny = d.y.length, z = zTransform(d.z), lut = colorLut();
+  const lo = parseFloat($('vmin').value), hi = parseFloat($('vmax').value), span = hi - lo || 1;
+  const c = Object.assign(document.createElement('canvas'), { width: nx, height: ny }), g = c.getContext('2d');
+  const img = g.createImageData(nx, ny), px = img.data;
+  for (let j = 0; j < ny; j++) {
+    const row = z[j], r = sy > 0 ? ny - 1 - j : j;   // 影像第 0 列在上方(北)
+    for (let i = 0; i < nx; i++) {
+      const v = row[i];
+      if (v === null || v === undefined || !Number.isFinite(v)) continue;
+      const k = Math.max(0, Math.min(255, Math.round((v - lo) / span * 255))) * 4, o = (r * nx + (sx > 0 ? i : nx - 1 - i)) * 4;
+      px[o] = lut[k]; px[o + 1] = lut[k + 1]; px[o + 2] = lut[k + 2]; px[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const ax = Math.abs(sx), ay = Math.abs(sy);
+  return { name: 'grid', source: c.toDataURL(), xref: 'x', yref: 'y', x: Math.min(d.x[0], d.x[nx - 1]) - ax / 2,
+           y: Math.max(d.y[0], d.y[ny - 1]) + ay / 2, sizex: nx * ax, sizey: ny * ay,
+           sizing: 'stretch', xanchor: 'left', yanchor: 'top', layer: 'below' };
+}
+// 播放時同一張網格換下一格:只換影像、把讀值用的 z 換掉,不重建圖
+function canSwapGrid(prev, d) {
+  const p = $('plot');
+  if (!prev || isProj() || p.hidden || p.layout?.images?.[0]?.name !== 'grid') return false;
+  if (prev.kind !== 'heatmap' || d.kind !== 'heatmap' || !d.geo) return false;
+  const same = (a, b) => a.length === b.length && a[0] === b[0] && a[a.length - 1] === b[b.length - 1];
+  return same(prev.x, d.x) && same(prev.y, d.y);
+}
+function swapGrid() {
+  const gi = gridImage(S.data), p = $('plot');
+  if (!gi) return draw();
+  const z = zTransform(S.data.z), cd = p.calcdata?.[0]?.[0];
+  p.data[0].z = z;
+  if (cd) cd.z = z;   // heatmap 的滑鼠讀值讀的是 calcdata
+  Plotly.relayout(p, { images: [gi] });
+  status();
+}
+function imageSpec(r) {
+  const [b0, b1, b2, b3] = r.bbox;
+  return { source: 'data:image/png;base64,' + r.png, xref: 'x', yref: 'y', x: b0, y: b3, sizex: b2 - b0, sizey: b3 - b1,
+           sizing: 'stretch', xanchor: 'left', yanchor: 'top', layer: 'below' };
+}
+
+function dataBox(d) {
+  const xs = d.x.filter(v => v !== null), ys = d.y.filter(v => v !== null);
+  if (!xs.length) return [-180, -90, 180, 90];
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const v of xs) { if (v < x0) x0 = v; if (v > x1) x1 = v; }
+  for (const v of ys) { if (v < y0) y0 = v; if (v > y1) y1 = v; }
+  const pad = d.kind === 'swath' ? 2 : 0;
+  return [Math.max(-180, x0 - pad), Math.max(-90, y0 - pad), Math.min(180, x1 + pad), Math.min(90, y1 + pad)];
+}
+
+const counting = () => !!S.composite && ['count', 'bcount'].includes($('compMode').value);
+// ---- 顯示單位:資料一律保持原始單位,只在畫面上與送出前換算(顯示值 = 原始值 × a + b)
+const AVOGADRO = 6.02214076e23;
+function unitOptions(units, name) {
+  const u = (units || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const ozone = /o3|ozone/i.test(name || '');
+  const out = [{ label: units || '', a: 1, b: 0 }];
+  if (/^mol (m-2|m\^-2|m\*\*-2|m⁻²)$|^mol\/m2$|^mol\/m\^2$/.test(u)) {
+    out.push({ label: 'molec cm⁻²', a: AVOGADRO / 1e4, b: 0 }, { label: 'µmol m⁻²', a: 1e6, b: 0 });
+    if (ozone) out.push({ label: 'DU', a: 1 / 4.4615e-4, b: 0 });
+  } else if (/^molec(ule)?s? (cm-2|cm\^-2|cm\*\*-2|cm⁻²)$|^molec(ule)?s?\/cm2$/.test(u)) {
+    out.push({ label: 'mol m⁻²', a: 1e4 / AVOGADRO, b: 0 });
+    if (ozone) out.push({ label: 'DU', a: 1 / 2.6867e16, b: 0 });
+  } else if (u === 'k' || u === 'kelvin') {
+    out.push({ label: '°C', a: 1, b: -273.15 });
+  } else if (u === 'pa') {
+    out.push({ label: 'hPa', a: 0.01, b: 0 });
+  }
+  return out;
+}
+const UNIT = () => counting() ? { label: '', a: 1, b: 0 } : (S.units?.[+$('unit').value] || { label: S.detail?.units || '', a: 1, b: 0 });
+const toDisp = v => v === null || v === undefined ? v : v * UNIT().a + UNIT().b;
+const shownUnits = () => UNIT().label;   // 覆蓋數是檔數/天數,沒有單位
+// 範圍框裡是顯示單位(log 時是 log10 顯示值);送給伺服器畫圖要換回原始單位
+function natRange() {
+  const { a, b } = UNIT(), lo = parseFloat($('vmin').value), hi = parseFloat($('vmax').value);
+  if ($('log').checked) return [lo - Math.log10(a), hi - Math.log10(a)];
+  return [(lo - b) / a, (hi - b) / a];
+}
+function unitParams() { const u = UNIT(); return u.a === 1 && u.b === 0 ? {} : { ua: u.a, ub: u.b, ul: u.label }; }
+function setupUnits(d) {
+  S.units = unitOptions(d.units, `${d.name} ${d.long_name || ''}`);
+  $('unit').innerHTML = S.units.map((o, i) => `<option value="${i}">${esc(o.label || '(無單位)')}</option>`).join('');
+  const pref = S.pendingUnit ?? store.get('units', {})[`${d.units}|${/o3|ozone/i.test(d.name) ? 'o3' : ''}`];
+  S.pendingUnit = null;   // 連結裡指定的單位只用一次
+  const k = S.units.findIndex(o => o.label === pref);
+  $('unit').value = String(Math.max(0, k));
+  $('unitBox').hidden = S.units.length < 2;
+}
+$('unit').onchange = () => {
+  // 換單位時範圍跟著換(同一段物理範圍),鎖定的範圍也不會跑掉
+  const prev = S.unitPrev ?? { a: 1, b: 0 }, u = UNIT();
+  for (const id of ['vmin', 'vmax']) {
+    let v = parseFloat($(id).value);
+    if (!Number.isFinite(v)) continue;
+    v = $('log').checked ? v - Math.log10(prev.a) + Math.log10(u.a) : ((v - prev.b) / prev.a) * u.a + u.b;
+    $(id).value = fmtIn(v);
+  }
+  S.unitPrev = { a: u.a, b: u.b };
+  const pref = store.get('units', {}); pref[`${S.detail.units}|${/o3|ozone/i.test(S.detail.name) ? 'o3' : ''}`] = u.label; store.set('units', pref);
+  $('title').innerHTML = titleHtml(S.detail, u.label);
+  redraw(); status();
+  if (S.lastClick && !$('insp').hidden) inspect(...S.lastClick, true);
+};
+function applyAuto(mode, rerender = true) {
+  const st = S.data?.stats;
+  if (!st || st.min === null) return;
+  if (counting()) mode = 'm';   // 覆蓋數只有幾個整數值,百分位會把 7、8 天也塗成最深色
+  let lo = toDisp(mode === 'p' ? st.p2 : st.min), hi = toDisp(mode === 'p' ? st.p98 : st.max);
+  if (UNIT().a < 0) [lo, hi] = [hi, lo];
+  if (S.composite?.diff && $('compMode').value === 'diff') { const m = Math.max(Math.abs(lo), Math.abs(hi)); lo = -m; hi = m; }   // 差值:0 在色表正中
+  if ($('log').checked) { lo = lo > 0 ? Math.log10(lo) : Math.log10(Math.max(hi * 1e-3, 1e-30)); hi = hi > 0 ? Math.log10(hi) : 0; }
+  $('vmin').value = fmtIn(lo); $('vmax').value = fmtIn(hi);
+  if (rerender) { S.manualRange = false; redraw(); }
+  updateLock();
+}
+function zTransform(z) {
+  const { a, b } = UNIT(), log = $('log').checked;
+  if (!log && a === 1 && b === 0) return z;
+  const f = v => { if (v === null) return null; v = v * a + b; return !log ? v : v <= 0 ? null : Math.log10(v); };
+  return Array.isArray(z[0]) ? z.map(row => row.map(f)) : z.map(f);
+}
+
+// 經緯線:間隔依畫面大小(約 6 條),畫到畫面外兩倍範圍,平移時不用重算
+function gridTrace(xr, yr) {
+  const span = Math.max(Math.abs(xr[1] - xr[0]), Math.abs(yr[1] - yr[0]));
+  const step = [0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 15, 30].find(v => v >= span / 6) || 30;
+  const [x0, x1] = [Math.max(-180, Math.min(...xr) - 2 * span), Math.min(180, Math.max(...xr) + 2 * span)];
+  const [y0, y1] = [Math.max(-90, Math.min(...yr) - 2 * span), Math.min(90, Math.max(...yr) + 2 * span)];
+  const x = [], y = [];
+  for (let v = Math.ceil(x0 / step) * step; v <= x1 + 1e-9; v += step) x.push(v, v, null), y.push(y0, y1, null);
+  for (let v = Math.ceil(y0 / step) * step; v <= y1 + 1e-9; v += step) x.push(x0, x1, null), y.push(v, v, null);
+  return { type: 'scattergl', mode: 'lines', x, y, line: { color: css('--ctl'), width: 0.6 }, opacity: 0.8, hoverinfo: 'skip' };
+}
+function draw() {
+  const d = S.data;
+  const p98 = Math.abs(d.stats?.p98 ?? 1);
+  const vf = (p98 !== 0 && p98 < 1e-3) || p98 >= 1e5 ? '.4e' : '.4~g';   // 1e-5 量級的值用科學記號,不然是 0.0001000
+  globeView(false);
+  $('plot').hidden = false;
+  const textColor = css('--text'), grid = css('--border');
+  const cmin = parseFloat($('vmin').value), cmax = parseFloat($('vmax').value);
+  const units = shownUnits();
+  const colorbar = { title: { text: ($('log').checked ? 'log10 ' : '') + units, side: 'right', font: { color: textColor } },
+                     thickness: 14, outlinewidth: 0, tickfont: { color: textColor }, exponentformat: 'power', showexponent: 'all' };
+  const traces = [];
+  const layout = {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: textColor, size: 13 },
+    margin: { l: 56, r: 20, t: 16, b: 44 }, showlegend: false, uirevision: S.file + S.group + S.variable,
+    xaxis: { gridcolor: grid, zeroline: false, title: { text: d.geo ? '經度' : (d.xlabel || '') } },
+    yaxis: { gridcolor: grid, zeroline: false, title: { text: d.geo ? '緯度' : (d.ylabel || '') } },
+    hoverlabel: { bgcolor: css('--panel'), bordercolor: grid, font: { color: textColor } },
+    // 地圖:拖曳 = 平移;按住 Shift 拖曳 = 框選放大(Plotly 內建:拖曳時按 Shift 會在平移與框選之間切換)
+    dragmode: d.geo ? 'pan' : 'zoom',
+  };
+  if (d.kind === 'line') {
+    traces.push({ type: 'scattergl', mode: 'lines', x: d.x, y: d.y, line: { color: css('--accent'), width: 1.4 } });
+    layout.xaxis.title.text = d.xlabel; layout.yaxis.title.text = units;
+  } else if (d.kind === 'heatmap') {
+    const gi = gridImage(d);
+    if (gi) layout.images = [gi];
+    traces.push({ type: 'heatmap', x: d.x, y: d.y, z: zTransform(d.z), colorscale: CS[cmapName()], zmin: cmin, zmax: cmax,
+      opacity: gi ? 0 : 1, zsmooth: false, colorbar, hovertemplate: d.geo ? `經度 %{x:.3f}°  緯度 %{y:.3f}°<br>值 %{z:${vf}}<extra></extra>` : `x %{x}<br>y %{y}<br>值 %{z:${vf}}<extra></extra>` });
+  } else if (d.kind === 'swath') {
+    // 看不見的取樣點:只負責滑鼠讀值、點選與色階條;畫面是 layout.images 裡的影像
+    traces.push({ type: 'scattergl', mode: 'markers', x: d.x, y: d.y,
+      marker: { size: 10, opacity: 0, color: zTransform(d.z), colorscale: CS[cmapName()], cmin, cmax, colorbar, showscale: true },
+      hovertemplate: `經度 %{x:.3f}°  緯度 %{y:.3f}°<br>值 %{marker.color:${vf}}<extra></extra>` });
+    if (S.image) layout.images = [imageSpec(S.image)];
+  }
+  if (d.geo) {
+    layout.xaxis.showgrid = layout.yaxis.showgrid = false;   // 網格線會疊在影像上
+    layout.yaxis.scaleanchor = 'x'; layout.yaxis.scaleratio = 1;
+    layout.xaxis.constrain = layout.yaxis.constrain = 'domain';
+    const box = S.lastRange || S.bbox || dataBox(d);
+    layout.xaxis.range = [box[0], box[2]]; layout.yaxis.range = [box[1], box[3]];
+    if ($('grid').checked) traces.push(gridTrace(layout.xaxis.range, layout.yaxis.range));
+    if (S.outlines?.borders && $('borders').checked)
+      traces.push({ type: 'scattergl', mode: 'lines', x: S.outlines.borders.x, y: S.outlines.borders.y, line: { color: css('--borders'), width: 0.8, dash: 'dash' }, hoverinfo: 'skip' });
+    if (S.outlines?.coast && $('coast').checked)
+      traces.push({ type: 'scattergl', mode: 'lines', x: S.outlines.coast.x, y: S.outlines.coast.y, line: { color: css('--coast'), width: 0.9 }, hoverinfo: 'skip' });
+  }
+  if (d.geo && S.lastClick) traces.push({ type: 'scatter', mode: 'markers', x: [S.lastClick[0]], y: [S.lastClick[1]], hoverinfo: 'skip',
+    marker: { symbol: 'circle-open', size: 14, color: css('--bad'), line: { width: 2.5 } } });
+  if (!d.geo) {   // 非地圖熱圖的軸也用 ×10ⁿ,不要 μ、m 這類 SI 字首
+    layout.xaxis.exponentformat = layout.yaxis.exponentformat = 'power';
+    layout.xaxis.automargin = layout.yaxis.automargin = true;   // ×10⁻⁴ 的刻度比較寬,邊界要跟著留
+  }
+  Plotly.react($('plot'), traces, layout, { responsive: true, displaylogo: false, scrollZoom: true, modeBarButtonsToRemove: ['select2d', 'lasso2d'] });
+  Plotly.Plots.resize($('plot'));   // 剛從地球儀切回來時,Plotly 量到的是隱藏前的大小
+  bindPlot();
+  status();
+}
+
+// 投影模式:畫布的座標軸是投影平面座標(公尺),後端用 cartopy 畫目前範圍的影像貼上去;
+// 框選放大送回新的投影範圍、點選先反投影成經緯度再查值。投影中心在進入投影時固定。
+function isProj() { return $('proj').value !== 'plate' && S.data?.geo; }
+function ensurePV() {
+  const proj = $('proj').value;
+  if (S.pv && S.pv.proj === proj) return S.pv;
+  let box = S.lastRange || S.bbox;
+  const fl = $('plot')._fullLayout;
+  if (!box && S.data?.geo && !S.pv && fl?.xaxis?.range && !$('plot').hidden) {   // 沒縮放過也用畫面上看到的範圍
+    const [x0, x1] = fl.xaxis.range, [y0, y1] = fl.yaxis.range;
+    box = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)];
+  }
+  let clon = 0, clat = 0;
+  if (box) { clon = (box[0] + box[2]) / 2; clat = (box[1] + box[3]) / 2; }
+  else if (S.data?.kind === 'swath' && S.data.x.length) {
+    // 沒放大過:用資料點的環形平均經度、平均緯度。整軌從北極掃到南極,取範圍中點會跑到別的半球
+    let sx = 0, sy = 0, la = 0, n = 0;
+    const step = Math.max(1, Math.floor(S.data.x.length / 5000));
+    for (let i = 0; i < S.data.x.length; i += step) {
+      const x = S.data.x[i], y = S.data.y[i];
+      if (x === null || y === null) continue;
+      sx += Math.cos(x * Math.PI / 180); sy += Math.sin(x * Math.PI / 180); la += y; n++;
+    }
+    if (n) { clon = Math.atan2(sy, sx) * 180 / Math.PI; clat = la / n; }
+  } else if (S.data?.kind === 'heatmap') {
+    // 規則網格(含合成結果):x、y 是兩個長度不同的座標軸,不能當成成對的點
+    const b = dataBox(S.data);
+    clon = (b[0] + b[2]) / 2; clat = (b[1] + b[3]) / 2;
+  }
+  if (!Number.isFinite(clon)) clon = 0;
+  if (!Number.isFinite(clat)) clat = 0;
+  clon = +clon.toFixed(2); clat = proj === 'ortho' ? +clat.toFixed(2) : 0;
+  // 地球儀的高度跟著平面圖的視野(或小區域資料的範圍):台灣看台灣,不要一切換就變整顆地球
+  const vb = box || (S.data?.kind === 'heatmap' ? dataBox(S.data) : null);
+  const alt = vb ? altFor(vb) : undefined;
+  S.pv = { proj, clon, clat, extent: null, alt };
+  return S.pv;
+}
+const altFor = b => +Math.min(1.9, Math.max(0.06, Math.max(b[2] - b[0], b[3] - b[1]) * 0.022)).toFixed(2);
+const PM = { l: 10, r: 90, t: 10, b: 10 };   // 投影畫布的邊距(右邊留給色階條)
+let projSeq = 0;
+// ---- WebGL 地球儀:旋轉、縮放全在瀏覽器裡(GPU),後端只畫一張全球貼圖
+let globe = null, globeTexUrl = null, globeSeq = 0;
+function globeView(on) {
+  $('earth').hidden = !on; $('legend').hidden = !on;
+  if (!on) $('gtip').hidden = true;
+  if (on) $('plot').hidden = true;
+}
+function ensureGlobe() {
+  if (globe) return globe;
+  globe = Globe({ rendererConfig: { antialias: true, preserveDrawingBuffer: true } })($('earth'))
+    .backgroundColor(css('--bg') || '#f6f7f9')
+    .showAtmosphere(true).atmosphereColor('#8fb7ff').atmosphereAltitude(0.12)
+    .showGraticules(false)
+    .globeTileEngineMaxLevel(9);
+  // 點選用 click 事件自己的座標:onGlobeClick 用的是上一次 mousemove 的位置,滑鼠一甩就點錯地方
+  let down = null;
+  $('earth').addEventListener('pointerdown', ev => { down = [ev.clientX, ev.clientY]; });
+  $('earth').addEventListener('click', ev => {
+    if (down && Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 4) return;   // 拖曳旋轉不算點選
+    const r = $('earth').getBoundingClientRect();
+    const c = globe.toGlobeCoords(ev.clientX - r.left, ev.clientY - r.top);
+    if (c) inspect(c.lng, c.lat);
+  });
+  greyUnloaded();
+  globe.controls().addEventListener('end', () => {   // 記住視角:網址、匯出用
+    const v = globe.pointOfView();
+    if (S.pv) { S.pv.clon = +v.lng.toFixed(2); S.pv.clat = +v.lat.toFixed(2); S.pv.alt = +v.altitude.toFixed(2); saveHash(); status(); }
+  });
+  globe.controls().zoomSpeed = 1.2;
+  globe.controls().minDistance = 102;   // 縮放上下限:不要放大到整片灰、縮到剩一個點
+  globe.controls().maxDistance = 500;
+  // 滑鼠讀值:螢幕座標 → 經緯度(toGlobeCoords)→ 最近像素的值;節流、只保留最後一個請求
+  let hoverT = null, hoverSeq = 0;
+  $('earth').addEventListener('mousemove', ev => {
+    if (ev.buttons) { $('gtip').hidden = true; return; }   // 拖曳中不讀
+    const r = $('earth').getBoundingClientRect();
+    const px = ev.clientX - r.left, py = ev.clientY - r.top;
+    clearTimeout(hoverT);
+    hoverT = setTimeout(async () => {
+      const c = globe.toGlobeCoords(px, py);
+      if (!c) { $('gtip').hidden = true; return; }
+      const my = ++hoverSeq;
+      const params = S.composite
+        ? { job: S.composite.id, x: c.lng, y: c.lat, res: $('compRes').value || S.data?.res || null }
+        : { file: S.file, group: S.group, var: S.variable, idx: JSON.stringify(S.idx), qa: currentQa(), x: c.lng, y: c.lat };
+      let v;
+      try { v = await api('/api/value', params, { quiet: true, timeout: 10000 }); } catch { return; }
+      if (my !== hoverSeq) return;
+      const t = $('gtip');
+      t.textContent = `經度 ${c.lng.toFixed(3)}°  緯度 ${c.lat.toFixed(3)}°  ${v.value === null ? '—' : fmtNum(toDisp(v.value)) + ' ' + shownUnits()}`;
+      t.style.left = `${px + 14}px`; t.style.top = `${py + 14}px`; t.hidden = false;
+    }, 90);
+  });
+  $('earth').addEventListener('mouseleave', () => { clearTimeout(hoverT); $('gtip').hidden = true; });
+  // 預設的方向光會把半邊球打暗、資料顏色跟色階條對不上:環境光為主、方向光只留一點立體感
+  globe.lights().forEach(l => { l.intensity = l.type === 'AmbientLight' ? 2.6 : 0.35; });
+  new ResizeObserver(() => globe.width($('plotwrap').clientWidth).height($('plotwrap').clientHeight)).observe($('plotwrap'));
+  return globe;
+}
+// 圖磚引擎底下有一顆純黑的內球(globe.gl 寫死的 color 0),圖磚還沒到的地方看到的就是它:
+// 第一次切到地球儀整顆黑,像壞掉。改成跟邊框同色的灰,看起來就是「還在載入」。
+function greyUnloaded() {
+  if (!globe) return;
+  const grey = css('--border') || '#d0d4da';
+  globe.scene().traverse(o => {
+    if (o.isMesh && o.geometry?.parameters?.radius && o.material?.color?.getHex?.() === 0) o.material.color.set(grey);
+  });
+}
+async function drawGlobe(seq) {
+  const pv = ensurePV();
+  const my = ++globeSeq;
+  globeView(true);
+  $('empty').hidden = true;
+  const g = ensureGlobe();
+  g.width($('plotwrap').clientWidth).height($('plotwrap').clientHeight);
+  if (!pv.placed) { g.pointOfView({ lat: pv.clat, lng: pv.clon, altitude: pv.alt > 0 ? Math.min(4, Math.max(0.02, pv.alt)) : 1.9 }, 0); pv.placed = true; }
+  updateLegend();
+  status();
+  // 圖磚(Web Mercator z/x/y):globe.gl 依縮放層級只要畫面上的那幾張,放大就換更細的一級。
+  // 參數一變(色表、範圍、qa、時間、合成)URL 就不同,清掉舊圖磚再換。
+  const q = new URLSearchParams(Object.fromEntries(Object.entries(figureParams()).filter(([, v]) => v !== null && v !== undefined)));
+  q.delete('bbox');
+  const base = `/api/tile?${q}`;
+  if (my !== globeSeq) return;
+  if (g._ncglobeTileBase !== base) {
+    g._ncglobeTileBase = base;
+    g.globeTileEngineClearCache();
+    g.globeTileEngineUrl((x, y, l) => `${base}&z=${l}&x=${x}&y=${y}`);
+  }
+  // 內球是 globe.gl 在下一個畫面才建立的:等它出現再改色
+  for (const ms of [0, 100, 400, 1200]) setTimeout(greyUnloaded, ms);
+}
+function updateLegend() {
+  const cs = CS[cmapName()] || [];
+  $('legendBar').style.background = `linear-gradient(to right, ${cs.map(([t, c]) => `${c} ${(t * 100).toFixed(0)}%`).join(', ')})`;
+  $('legendMin').textContent = fmtNum(parseFloat($('vmin').value));
+  $('legendMax').textContent = fmtNum(parseFloat($('vmax').value));
+  $('legendTitle').textContent = `${S.detail?.long_name || ''} ${($('log').checked ? 'log10 ' : '') + shownUnits()}`;
+}
+
+async function drawProjected(seq) {
+  if ($('proj').value === 'ortho') return drawGlobe(seq);
+  globeView(false);
+  const pv = ensurePV();
+  const my = ++projSeq;
+  const wrap = $('plotwrap');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(200, wrap.clientWidth - PM.l - PM.r), h = Math.max(150, wrap.clientHeight - PM.t - PM.b);
+  const t = figureTitle();
+  let r;
+  try {
+    r = await api('/api/projrender', {
+      ...figureParams(), proj: pv.proj, clon: pv.clon, clat: pv.clat,
+      extent: pv.extent ? JSON.stringify(pv.extent) : null,
+      w: Math.round(w * dpr), h: Math.round(h * dpr), dpi: Math.round(100 * dpr), title: t.title, subtitle: t.subtitle,
+    }, { cache: true, timeout: TIMEOUT.figure });
+  } catch (e) { if (!e.cancelled) showError(e); return; }
+  if (my !== projSeq || (seq !== undefined && seq !== reqSeq)) return;
+  pv.shown = r.extent;
+  const [x0, x1, y0, y1] = r.extent;
+  const textColor = css('--text');
+  const cmin = parseFloat($('vmin').value), cmax = parseFloat($('vmax').value);
+  const N = 120;   // 看不見的點擊網格:Plotly 只在有資料的地方回報點擊
+  const gx = Array.from({ length: N }, (_, i) => x0 + (i + 0.5) * (x1 - x0) / N);
+  const gy = Array.from({ length: N }, (_, i) => y0 + (i + 0.5) * (y1 - y0) / N);
+  const traces = [
+    { type: 'heatmap', x: gx, y: gy, z: gy.map(() => gx.map(() => 0)), opacity: 0, showscale: false, hoverinfo: 'none', colorscale: [[0, '#000'], [1, '#000']] },
+    { type: 'scatter', mode: 'markers', x: [(x0 + x1) / 2], y: [(y0 + y1) / 2], hoverinfo: 'skip',
+      marker: { size: 1, opacity: 0, color: [cmin], colorscale: CS[cmapName()], cmin, cmax, showscale: true,
+                colorbar: { title: { text: ($('log').checked ? 'log10 ' : '') + shownUnits(), side: 'right', font: { color: textColor } },
+                            thickness: 14, outlinewidth: 0, tickfont: { color: textColor }, exponentformat: 'power', showexponent: 'all' } } },
+  ];
+  const ax = { range: null, showgrid: false, zeroline: false, showticklabels: false, ticks: '', showline: false };
+  const layout = {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: textColor, size: 13 },
+    margin: PM, showlegend: false, dragmode: 'pan',
+    uirevision: 'proj' + pv.proj + pv.clon + ',' + pv.clat + S.file + S.variable,
+    xaxis: { ...ax, range: [x0, x1], constrain: 'domain' },
+    yaxis: { ...ax, range: [y0, y1], scaleanchor: 'x', scaleratio: 1, constrain: 'domain' },
+    images: [{ source: 'data:image/png;base64,' + r.png, xref: 'x', yref: 'y', x: x0, y: y1, sizex: x1 - x0, sizey: y1 - y0,
+               sizing: 'stretch', xanchor: 'left', yanchor: 'top', layer: 'below' }],
+  };
+  $('plot').hidden = false; $('empty').hidden = true;
+  Plotly.react($('plot'), traces, layout, { responsive: true, displaylogo: false, scrollZoom: true, modeBarButtonsToRemove: ['select2d', 'lasso2d'] });
+  bindPlot();
+  status();
+}
+function figureParams() {
+  return {
+    file: S.file, group: S.group, var: S.variable, idx: JSON.stringify(S.idx),
+    bbox: JSON.stringify(S.lastRange || S.bbox || dataBox(S.data)), qa: currentQa(),
+    vmin: natRange()[0], vmax: natRange()[1], cmap: cmapName(), log: $('log').checked ? 1 : 0, ...unitParams(),
+    job: S.composite?.id, mode: S.composite ? $('compMode').value : null, res: S.composite ? ($('compRes').value || null) : null,
+    ly: layersParam(),   // 地球儀圖磚、投影、匯出圖的圖層是伺服器畫的:告訴它勾了哪些
+  };
+}
+function figureTitle() {
+  if (S.composite) {
+    if (S.composite.diff) {
+      const m = { diff: 'A − B', mean: 'A', b: 'B 平均', bcount: 'B 覆蓋數' }[$('compMode').value];
+      return { title: `${S.detail.long_name} — ${m}`, subtitle: `${S.composite.fullSpan || S.composite.span} · ${compSettingsText(S.composite)}` };
+    }
+    const c = S.composite, w = { file: '檔', day: '天' }[c.weight];
+    const n = c.weight === 'day' ? `${c.days} 天` : `${c.used} 個檔`;
+    const m = { mean: c.weight === 'pixel' ? '平均(像素等權)' : '平均', count: `覆蓋${w}數`, std: `${w}間標準差` }[$('compMode').value];
+    return { title: `${S.detail.long_name} — ${n}${m}`, subtitle: `${S.composite.fullSpan || S.composite.span} · ${compSettingsText(S.composite)}` };
+  }
+  const lab = (S.detail.extra_dims || []).filter(e => e.size > 1).map(e => `${e.dim} = ${e.labels[S.idx[e.dim] ?? 0]}`).join(' · ');
+  const fm = S.dir?.files?.find(f => f.path === S.file);
+  return { title: S.detail.long_name, subtitle: [obsLabel(fm), S.file.split('/').pop(), lab].filter(Boolean).join('  ·  ') };
+}
+function figureBlob(size) {
+  const t = figureTitle();
+  let proj = S.detail.geo ? $('proj').value : 'plate';
+  const pv = proj !== 'plate' ? ensurePV() : null;
+  const params = figureParams();
+  if (SET.credit) params.credit = 1;   // 設定 › 匯出 PNG 角落標上 ncglobe
+  // 地球儀放大到一個區域時,匯出那個區域的平面地圖(整顆地球的圖不是使用者要的近照)
+  if (proj === 'ortho' && pv?.alt !== undefined && pv.alt < 1.0) {
+    const h = pv.alt / 0.044, w = h * size.w / size.h / Math.max(Math.cos(pv.clat * Math.PI / 180), 0.3);
+    params.bbox = JSON.stringify([pv.clon - w, Math.max(-90, pv.clat - h), pv.clon + w, Math.min(90, pv.clat + h)].map(v => +v.toFixed(3)));
+    proj = 'plate';
+  }
+  return api('/api/figure', {
+    ...params, proj, w: size.w, h: size.h, dpi: size.dpi, title: t.title, subtitle: t.subtitle,
+    clon: pv?.clon, clat: pv?.clat, extent: pv?.shown && proj !== 'ortho' ? JSON.stringify(pv.shown) : null,
+  }, { blob: true, timeout: TIMEOUT.figure });
+}
+$('exportBtn').onclick = async () => {
+  if (!S.data) return;
+  stopPlay();   // 播放中按匯出:圖與檔名都要是按下那一刻的時間
+  const e = (S.detail.extra_dims || []).find(x => x.size > 1);
+  const tag = e ? '_' + String(e.labels[S.idx[e.dim] ?? 0]).replace(/[^0-9A-Za-z]+/g, '') : '';
+  if (!S.detail.geo) {   // 非地圖變數:直接用 Plotly 的匯出
+    return Plotly.downloadImage($('plot'), { format: 'png', scale: 2, filename: S.variable });
+  }
+  // 平面地圖的圖檔長寬比照區域(台灣是直的,固定 3:2 會左右各空一半)
+  let size = { w: 2400, h: 1600, dpi: 200 };
+  const b = S.lastRange || S.bbox || (S.data ? dataBox(S.data) : null);
+  if (b && $('proj').value === 'plate') {
+    const r = (b[2] - b[0]) * Math.cos(((b[1] + b[3]) / 2) * Math.PI / 180) / Math.max(b[3] - b[1], 1e-6);
+    size = { w: Math.round(Math.min(3200, Math.max(1400, 1500 * r + 300))), h: 1700, dpi: 200 };
+  }
+  const blob = await figureBlob(size).catch(e => { if (!e.cancelled) showError(e); return null; });
+  if (!blob) return;
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `${S.variable}${tag}.png` });
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+
+function status() {
+  const d = S.data; if (!d) return;
+  const st = d.stats || {}, parts = [];
+  const onGlobe = isProj() && S.pv?.proj === 'ortho';   // 地球儀用圖磚,平面圖的抽稀資訊不適用
+  if (d.kind === 'swath' && !onGlobe) { const k = S.renderStep ?? d.step; parts.push(`${(st.count ?? 0).toLocaleString()} 個有效像素`, k > 1 ? `抽稀 1/${k}(放大會變細)` : '原生解析度'); }
+  if (S.composite && d.res) parts.push(`網格 ${(+d.res).toFixed(3)}°`);
+  if (d.kind === 'heatmap' && !S.composite && !onGlobe) parts.push(`${d.y.length}×${d.x.length} 格`, (d.step[0] > 1 || d.step[1] > 1) ? `抽稀 1/${Math.max(...d.step)}(原生 ${d.native[0]}×${d.native[1]},放大會變細)` : '原生解析度');
+  if (st.min !== undefined && st.min !== null) parts.push(`最小 ${fmtNum(toDisp(st.min))}`, `最大 ${fmtNum(toDisp(st.max))}`, `2–98% ${fmtNum(toDisp(st.p2))} – ${fmtNum(toDisp(st.p98))}`);
+  if (d.kind === 'line') parts.push(`${d.y.length.toLocaleString()} 點${d.step > 1 ? `(抽稀 1/${d.step})` : ''}`);
+  if (S.outlines?.res && $('proj').value === 'plate') parts.push(`海岸線 ${S.outlines.res}`);
+  if (isProj() && S.pv?.proj === 'ortho') parts.push(`地球儀 · 中心 ${fmtLL(S.pv.clon, S.pv.clat)} · 拖曳旋轉、滾輪縮放、點選查值 · 兩極 85° 以上不顯示`);
+  else if (isProj()) parts.push(`投影 ${$('proj').selectedOptions[0].text} · 中心 ${S.pv?.clon}°${S.pv?.proj === 'ortho' ? ', ' + S.pv.clat + '°' : ''} · ${S.pv?.proj === 'ortho' ? '拖曳轉動地球、滾輪縮放' : '框選放大'}、雙擊還原、點選查值`);
+  if (S.image?.corners || (isProj() && d.kind === 'swath')) parts.push('像素:真實角點');
+  $('status').innerHTML = parts.map(p => `<span>${esc(p)}</span>`).join('');
+  updateLock();
+}
+
+// ---------------------------------------------------------------- 縮放 / 點選
+let zoomT;
+function bindPlot() {
+  const p = $('plot');
+  if (p._ncglobeBound) return;
+  p._ncglobeBound = true;
+  p.on('plotly_relayout', onRelayout);
+  // 平面地圖用原生 click 換算經緯度:plotly_click 只在有資料的格子觸發,點在沒資料、被 qa 篩掉的地方完全沒反應
+  let down = null;
+  p.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+  p.addEventListener('click', e => {
+    if (isProj() || !S.data?.geo || !e.target.closest?.('.nsewdrag')) return;
+    if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;   // 拖曳不算點選
+    const fl = p._fullLayout, r = e.target.closest('.nsewdrag').getBoundingClientRect();
+    inspect(+fl.xaxis.p2l(e.clientX - r.left).toFixed(4), +fl.yaxis.p2l(e.clientY - r.top).toFixed(4));
+  });
+  p.on('plotly_click', async ev => {
+    const pt = ev.points?.[0];
+    if (!pt || S.data?.kind === 'line') return;
+    if (!isProj() && S.data?.geo) return;   // 平面地圖由上面的原生 click 處理
+    if (isProj()) {
+      try {
+        const ll = await api('/api/unproject', { proj: S.pv.proj, clon: S.pv.clon, clat: S.pv.clat, x: pt.x, y: pt.y }, { quiet: true });
+        inspect(ll.lon, ll.lat);
+      } catch (e) { $('insp').hidden = false; $('inspBody').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+      return;
+    }
+    inspect(pt.x, pt.y);
+  });
+}
+function onRelayout(ev) {
+  if (!S.data?.geo || !ev) return;
+  if (isProj()) {
+    if (!Object.keys(ev).some(k => /^[xy]axis\.(range|autorange)/.test(k))) return;
+    const fl = $('plot')._fullLayout;
+    clearTimeout(zoomT);
+    const auto = ev['xaxis.autorange'] || ev['yaxis.autorange'];
+    const ext = auto ? null : [...fl.xaxis.range, ...fl.yaxis.range].map(v => +v.toFixed(0));
+    zoomT = setTimeout(() => { S.pv.extent = ext; drawProjected(); saveHash(); }, 350);
+    return;
+  }
+  // 只認真的縮放/平移:自己貼影像、視窗或側欄改變大小(autosize)也會觸發 relayout,
+  // 那時的座標範圍可能還是上一個檔的,當成縮放就會把新檔鎖在舊視野
+  if (!Object.keys(ev).some(k => /^[xy]axis\.(range|autorange)/.test(k))) return;
+  const fl = $('plot')._fullLayout;
+  if (!fl?.xaxis) return;
+  { // 拖出地圖外(緯度 −815°、經度 500°…):拉回 ±180 / ±90 之內,範圍保持大小
+    const fit = (a, b, lo, hi) => { let [u, v] = a < b ? [a, b] : [b, a]; const w = Math.min(v - u, hi - lo);
+      if (u < lo) { u = lo; v = lo + w; } if (v > hi) { v = hi; u = hi - w; } return [u, v]; };
+    const [ax0, ax1] = fl.xaxis.range, [ay0, ay1] = fl.yaxis.range;
+    const nx = fit(ax0, ax1, -180, 180), ny = fit(ay0, ay1, -90, 90);
+    if (Math.abs(nx[0] - Math.min(ax0, ax1)) > 1e-9 || Math.abs(nx[1] - Math.max(ax0, ax1)) > 1e-9
+        || Math.abs(ny[0] - Math.min(ay0, ay1)) > 1e-9 || Math.abs(ny[1] - Math.max(ay0, ay1)) > 1e-9) {
+      Plotly.relayout($('plot'), { 'xaxis.range': nx, 'yaxis.range': ny });   // 會再進來一次,那時已在範圍內
+      return;
+    }
+  }
+  const [x0, x1] = fl.xaxis.range, [y0, y1] = fl.yaxis.range;
+  const box = [Math.max(-180, Math.min(x0, x1)), Math.max(-90, Math.min(y0, y1)), Math.min(180, Math.max(x0, x1)), Math.min(90, Math.max(y0, y1))].map(v => +v.toFixed(4));
+  S.lastRange = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)];
+  clearTimeout(zoomT);
+  const auto = ev && (ev['xaxis.autorange'] || ev['yaxis.autorange']);
+  zoomT = setTimeout(() => {
+    S.bbox = auto ? null : box;
+    if (auto) S.lastRange = null;
+    // 已抓的資料(畫面外多抓一圈)還涵蓋新畫面、也沒有放大超過兩倍:不重抓、不重算,只在需要時補畫影像
+    const ref = S.sliceView || (S.data ? dataBox(S.data) : null);
+    const pad = S.sliceView ? PAD : 0, rw = ref ? ref[2] - ref[0] : 0, rh = ref ? ref[3] - ref[1] : 0;
+    const covered = ref && !auto && !S.composite && S.data?.kind !== 'line'
+      && box[0] >= ref[0] - pad * rw && box[2] <= ref[2] + pad * rw && box[1] >= ref[1] - pad * rh && box[3] <= ref[3] + pad * rh
+      && (box[2] - box[0]) >= rw / 2 && (S.sliceView || S.data.kind === 'swath' || [].concat(S.data.step).every(v => v === 1));
+    if (covered) { saveHash(); if (S.data.kind === 'swath') renderImage(); else status(); return; }
+    loadSlice(false, { view: true });
+  }, 150);
+}
+
+async function inspect(x, y, refresh = false) {
+  const wasHidden = $('insp').hidden;
+  S.lastClick = [x, y];
+  $('insp').hidden = false;
+  $('gtip').hidden = true;
+  try { Plotly.Fx.unhover($('plot')); } catch {}   // 面板一開地圖變窄,滑鼠旁的舊讀值會指錯地方
+  if (!isProj() && S.data?.geo && (wasHidden || !refresh)) draw();   // 平面圖上標出點選的位置
+  $('inspTitle').textContent = `點選 ${fmtLL(+x, +y, 3)}`;
+  $('inspBody').textContent = '讀取中…';
+  let r;
+  try {
+    r = S.composite
+      ? await api('/api/composite/point', { id: S.composite.id, bbox: JSON.stringify([x - 1, y - 1, x + 1, y + 1]),
+                                            res: $('compRes').value || S.data?.res || 0.05, x, y })   // 跟畫面同一個格距
+      : await api('/api/point', { file: S.file, group: S.group, var: S.variable, idx: JSON.stringify(S.idx), x, y, qa: currentQa() });
+  }
+  catch (e) { $('inspBody').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  const w = Object.entries(r.where).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(typeof v === 'number' ? +v.toFixed(5) : v)}</td></tr>`).join('');
+  // 合成的值沒有帶單位(後端只知道數字);單位 "1" 是無因次,不顯示,免得看起來像另一個數字
+  // 跟地圖同一個量(目前的變數、合成的平均/差值)用選的顯示單位;其他變數維持各自原始單位
+  const same = v => S.composite ? !v.count
+    : v.current || (UNIT().b === 0 && cleanUnits(v.units) && cleanUnits(v.units) === cleanUnits(S.detail.units));
+  const unitOf = v => same(v) ? shownUnits() : (S.composite ? '' : cleanUnits(v.units));
+  const valOf = v => same(v) && typeof v.value === 'number' ? toDisp(v.value) : v.value;
+  const vals = r.values.map(v => `<tr class="${v.current ? 'cur' : ''}"><td>${esc(v.name)}</td><td>${esc(fmtNum(valOf(v)))} <span style="color:var(--muted)">${esc(unitOf(v))}</span></td></tr>`).join('');
+  const note = r.note ? `<div class="insp-note">${esc(r.note)}</div>` : '';
+  $('inspBody').innerHTML = `${note}<table>${w}</table>${r.series ? '<div id="series"></div><div class="xs-ctl"><button class="btn" id="seriesCsv" title="這一點在這個檔每個時間的值">下載這一點的時序 CSV</button></div>' : ''}<div class="sec">這一點的變數(同一組維度)</div><table>${vals || '<tr><td>—</td></tr>'}</table>${xsSection()}`;
+  xsBind(x, y);
+  if (r.series) {
+    const u = shownUnits();
+    Plotly.newPlot('series', [{ type: 'scattergl', mode: 'lines', x: r.series.x, y: r.series.y.map(toDisp), line: { color: css('--accent'), width: 1.2 } }], {
+      paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: css('--text'), size: 11 },
+      margin: { l: 52, r: 8, t: 8, b: 32 }, xaxis: { gridcolor: css('--border') },
+      yaxis: { gridcolor: css('--border'), exponentformat: 'power', showexponent: 'all', title: { text: u, font: { size: 11 } } },
+      shapes: r.series.current !== null && r.series.current !== undefined   // 目前畫在地圖上的時間
+        ? [{ type: 'line', x0: r.series.current, x1: r.series.current, yref: 'paper', y0: 0, y1: 1, line: { color: css('--bad'), width: 1 } }] : [],
+      title: { text: '' },
+    }, { displayModeBar: false, responsive: true });
+    $('seriesCsv').onclick = () => {
+      const lines = [`time,${S.variable}_${u.replace(/[^0-9A-Za-z]+/g, '') || 'value'}`,
+                     ...r.series.x.map((t, i) => `${t},${r.series.y[i] === null ? '' : toDisp(r.series.y[i])}`)];
+      const a = Object.assign(document.createElement('a'), {
+        href: URL.createObjectURL(new Blob(['\ufeff# ' + `${S.file.split('/').pop()} · ${(+x).toFixed(4)}E ${(+y).toFixed(4)}N\n` + lines.join('\n')], { type: 'text/csv' })),
+        download: `${S.variable}_${(+y).toFixed(3)}N_${(+x).toFixed(3)}E_series.csv` });
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    };
+  }
+  window.dispatchEvent(new Event('resize'));
+}
+// ---- 跨檔時序:同一點(或半徑內平均)在資料夾裡每個檔、或合成所用每個檔的值
+// 產品鍵:檔名的數字都換成 #、S5P 的處理器(NRTI/OFFL/RPRO)不分 —— 同一種產品的檔長得一樣
+const productKey = p => p.split('/').pop().replace(/^S5P_(NRTI|OFFL|RPRO)_/, 'S5P_').replace(/\d+/g, '#');
+function xsFiles() {
+  if (S.composite) return S.composite.files.filter(f => f.set !== 'b' && f.path).map(f => f.path);
+  const k = S.file ? productKey(S.file) : null;
+  return (S.files || []).filter(f => !k || productKey(f) === k);
+}
+function xsSection() {
+  const n = xsFiles().length;
+  if (!S.data?.geo || n < 2) return '';
+  const src = S.composite ? `合成用的 ${n} 個檔` : `這個資料夾裡同產品的 ${n} 個檔`;
+  return `<div class="sec">跨檔時序(${src})</div>
+    <div class="xs-ctl"><select id="xsRad" title="單點:最近的像素;半徑:範圍內有效像素的平均">
+      <option value="0">單點</option><option value="10">半徑 10 km</option><option value="25">半徑 25 km</option><option value="50">半徑 50 km</option></select>
+      <button class="btn" id="xsGo">畫出</button><button class="btn" id="xsCsv" hidden>下載 CSV</button></div>
+    <div class="help" id="xsInfo"></div><div id="xseries" hidden></div>`;
+}
+let xsSeq = 0;
+function xsBind(x, y) {
+  if (!$('xsGo')) return;
+  const files = xsFiles();
+  const key = r => JSON.stringify([S.file, S.group, S.variable, S.idx, currentQa(), x, y, r, files.length, S.composite?.id]);
+  if (S.xs && S.xs.key === key(S.xs.radius)) { $('xsRad').value = String(S.xs.radius); xsPlot(); }   // 換時間重畫面板時保留
+  $('xsGo').onclick = async () => {
+    const radius = +$('xsRad').value, my = ++xsSeq;
+    S.xs = { key: key(radius), radius, rows: [], x, y };
+    $('xsGo').disabled = true; $('xsCsv').hidden = true;
+    for (let i = 0; i < files.length; i += 6) {
+      $('xsInfo').textContent = `讀取中… ${i} / ${files.length} 個檔`;
+      let part;
+      try {
+        part = await api('/api/series', { files: JSON.stringify(files.slice(i, i + 6)), group: S.group, var: S.variable,
+                                          idx: JSON.stringify(S.idx), x, y, qa: currentQa(), radius }, { quiet: true, timeout: 120000 });
+      } catch (e) { $('xsInfo').textContent = e.message; break; }
+      if (my !== xsSeq) return;
+      S.xs.rows.push(...part);
+      xsPlot();
+    }
+    if (my === xsSeq) $('xsGo').disabled = false;
+  };
+  $('xsCsv').onclick = () => {
+    const u = shownUnits(), rows = [...S.xs.rows].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [['time_utc', `value${u ? ` (${u})` : ''}`, 'n_pixels', `std${u ? ` (${u})` : ''}`, 'file', 'note'].map(q).join(',')];
+    for (const r of rows) lines.push([r.time, r.value === null ? '' : toDisp(r.value), r.n, r.std === null ? '' : r.std * UNIT().a, r.name, r.error || ''].map(q).join(','));
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv' })),
+      download: `${S.variable}_${S.xs.y.toFixed(3)}N_${S.xs.x.toFixed(3)}E${S.xs.radius ? '_r' + S.xs.radius + 'km' : ''}.csv` });
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+}
+function xsPlot() {
+  const rows = [...S.xs.rows].filter(r => r.time).sort((a, b) => a.time.localeCompare(b.time));
+  const ok = rows.filter(r => r.value !== null);
+  const errs = S.xs.rows.filter(r => r.error).length;
+  $('xsInfo').textContent = `${ok.length} / ${S.xs.rows.length} 個檔有值` + (errs ? ` · ${errs} 個檔讀取失敗(見 CSV)` : '')
+    + (S.xs.radius ? ` · 半徑 ${S.xs.radius} km 平均,誤差棒為標準差` : '');
+  $('xsCsv').hidden = !S.xs.rows.length;
+  $('xseries').hidden = false;
+  const t = r => r.time.replace(' ', 'T');
+  const cur = ok.filter(r => S.file && S.file.endsWith('/' + r.name));
+  const traces = [{ type: 'scatter', mode: 'lines+markers', x: ok.map(t), y: ok.map(r => toDisp(r.value)),
+    line: { color: css('--accent'), width: 1 }, marker: { size: 5 }, name: '',
+    error_y: S.xs.radius ? { type: 'data', array: ok.map(r => (r.std ?? 0) * UNIT().a), visible: true, thickness: 0.8, width: 0, color: css('--muted') } : undefined,
+    hovertemplate: '%{x}<br>%{y:.4g}<extra></extra>' }];
+  if (cur.length) traces.push({ type: 'scatter', mode: 'markers', x: cur.map(t), y: cur.map(r => toDisp(r.value)),
+    marker: { size: 9, color: css('--bad') }, hoverinfo: 'skip', name: '' });
+  Plotly.react('xseries', traces, {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { color: css('--text'), size: 11 }, showlegend: false,
+    margin: { l: 52, r: 8, t: 8, b: 36 }, xaxis: { gridcolor: css('--border'), type: 'date' },
+    yaxis: { gridcolor: css('--border'), exponentformat: 'power', showexponent: 'all', title: { text: shownUnits(), font: { size: 11 } } },
+  }, { displayModeBar: false, responsive: true });
+}
+function closeInspector() {
+  S.lastClick = null;
+  if (!$('insp').hidden) { $('insp').hidden = true; if (S.data?.geo && !isProj()) draw(); window.dispatchEvent(new Event('resize')); }
+}
+$('inspClose').onclick = closeInspector;
+
+function showError(e) {
+  $('empty').hidden = false;
+  $('empty').innerHTML = `<div class="err" role="alert"><span class="err-ic" aria-hidden="true">!</span><span>${esc(e.message || e)}</span><button class="errx" aria-label="關閉訊息" title="關閉(地圖還在下面)">${svg('x', 16)}</button></div>`;
+  $('empty').querySelector('.errx').onclick = () => { $('empty').hidden = true; };
+}
+
+// ---------------------------------------------------------------- 多軌 / 多日合成
+let cmJob = null, cmPoll = null, cmTree = null;
+const cmSel = new Set();   // 已勾選的檔(路徑):不放在勾選框上,換篩選條件、清單重畫都不會掉
+// 選檔範圍:目前的資料夾,或往上幾層(含所有子資料夾)—— 庫存是「產品/年/月」分資料夾放的,
+// 跨月份(季、年)合成要從上一層選
+function cmFiles() { return cmTree ? cmTree.files : (S.dir?.files || []).map(f => ({ ...f, rel: '' })); }
+function cmScopes() {
+  const out = [{ path: S.dir.path, label: `目前的資料夾(${S.dir.path.split('/').pop()})` }];
+  let p = S.dir.path;
+  for (let i = 1; i <= 4; i++) {
+    const up = parentOf(p);
+    if (!up || up === p || !S.roots?.some(r => up === r || up.startsWith(r + '/'))) break;
+    out.push({ path: up, label: `${up.split('/').pop()}(含所有子資料夾)` });
+    p = up;
+  }
+  return out;
+}
+async function cmSetScope() {
+  const path = $('cmScope').value;
+  if (path === S.dir.path) { cmTree = null; $('cmScopeInfo').textContent = ''; }
+  else {
+    $('cmScopeInfo').textContent = '讀取中…';
+    try { cmTree = await api('/api/tree', { path }, { quiet: true }); }
+    catch (e) { $('cmScopeInfo').textContent = e.message; return; }
+    $('cmScopeInfo').textContent = `${cmTree.files.length} 個檔${cmTree.truncated ? '(太多,只列前 20000 個)' : ''}`;
+  }
+  $('cmList').innerHTML = '';
+  cmRender();
+}
+$('cmScope').onchange = cmSetScope;
+// 觀測日期篩選看的是從檔名解析出的觀測時間,不是檔名子字串:
+// S5P 檔名尾巴還有處理時間,篩「202602」會把 1/31 的軌道(2/1 處理)也篩進來
+function cmRender() {
+  const q = $('cmFilter').value.trim().toLowerCase();
+  const from = $('cmFrom').value, to = $('cmTo').value;
+  const list = $('cmList');
+  list.innerHTML = '';
+  for (const f of cmFiles()) {
+    if (q && !(f.rel + '/' + f.name).toLowerCase().includes(q)) continue;
+    if ((from || to) && (!f.date || (from && f.date < from) || (to && f.date > to))) continue;
+    const l = document.createElement('label');
+    const lab = obsLabel(f);
+    l.title = f.name;
+    l.innerHTML = `<input type="checkbox" value="${esc(f.path)}" ${cmSel.has(f.path) ? 'checked' : ''}>${f.rel ? `<span class="rel">${esc(f.rel)}</span>` : ''}<span>${esc(lab || midTrunc(f.name, 60))}${[f.proc, f.ver, f.mode].filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</span><span class="sz">${fmtSize(f.size)}</span>`;
+    list.append(l);
+  }
+  cmCount();
+}
+function cmSelected() { return [...cmSel]; }
+function cmCount() {
+  const shown = $('cmList').querySelectorAll('input').length;
+  const shownSel = $('cmList').querySelectorAll('input:checked').length;
+  const hidden = cmSel.size - shownSel;   // 換篩選條件前勾的檔還在已選裡,一定要讓人看到
+  $('cmCount').innerHTML = hidden
+    ? `<span class="warn">已選 ${cmSel.size} 個,其中 ${hidden} 個不在目前清單裡</span> <button class="btn" id="cmDropHidden">只保留清單中的</button>`
+    : `已選 ${cmSel.size} 個(清單 ${shown} 個)${cmSel.size ? '' : ' · 勾選要合成的檔,或按「勾選清單中全部」'}`;
+  if (!cmPoll) $('cmStart').disabled = cmSel.size === 0;
+  const dh = $('cmDropHidden');
+  if (dh) dh.onclick = () => {
+    const keep = new Set([...$('cmList').querySelectorAll('input:checked')].map(i => i.value));
+    for (const p of [...cmSel]) if (!keep.has(p)) cmSel.delete(p);
+    cmCount();
+  };
+}
+$('cmList').addEventListener('change', e => { if (e.target.checked) cmSel.add(e.target.value); else cmSel.delete(e.target.value); cmCount(); });
+$('cmFilter').oninput = $('cmFrom').oninput = $('cmTo').oninput = cmRender;
+function cmRegionInfo() {
+  const b = S.lastRange || S.bbox || (S.data ? dataBox(S.data) : null);
+  $('cmRegionInfo').textContent = $('cmRegion').value === 'view'
+    ? (b ? `只合成 ${fmtBox(b)};範圍越小越快,之後仍可在範圍內縮放` : '')
+    : '整個檔都合成(全球 L2 多軌時點很多、比較慢)';
+}
+$('cmRegion').onchange = cmRegionInfo;
+$('cmAll').onclick = () => { $('cmList').querySelectorAll('input').forEach(i => { i.checked = true; cmSel.add(i.value); }); cmCount(); };
+$('cmNone').onclick = () => { $('cmList').querySelectorAll('input').forEach(i => { i.checked = false; cmSel.delete(i.value); }); cmCount(); };
+$('compBtn').onclick = () => {
+  if (!S.detail?.geo) return;
+  $('cmVar').textContent = `${S.group ? S.group + '/' : ''}${S.variable}`;
+  $('cmFilter').value = ''; $('cmFrom').value = ''; $('cmTo').value = '';
+  cmTree = null;
+  cmSel.clear();   // 不預先勾目前的檔:篩選後「勾選清單中全部」時,它會被悄悄混進去
+  $('cmQa').textContent = S.detail.has_qa ? `qa_value ≥ ${currentQa() ?? '(不篩)'}(用目前的設定)` : '這個變數沒有 qa_value,不做品質篩選';
+  cmRegionInfo();
+  $('cmScope').innerHTML = cmScopes().map(o => `<option value="${esc(o.path)}">${esc(o.label)}</option>`).join('');
+  $('cmScopeInfo').textContent = '';
+  $('cmList').innerHTML = '';
+  cmRender();
+  $('cmErr').textContent = ''; $('cmProgWrap').hidden = true; $('cmCancel').hidden = true; $('cmStart').disabled = false;
+  $('compModal').hidden = false;
+  stopPlay();
+  $('cmFilter').focus();
+};
+// 合成還在跑時關視窗:問要不要取消(以前關了它還是在背景跑,做完會突然跳進合成畫面)
+function closeComp() {
+  if (cmPoll && cmJob) {
+    if (!confirm('合成還在進行,要取消嗎?')) return;
+    api('/api/composite/cancel', { id: cmJob }, { quiet: true }).catch(() => {});
+    clearInterval(cmPoll); cmPoll = null; cmJob = null;
+  }
+  $('compModal').hidden = true;
+  $('compBtn').focus();
+}
+$('cmClose').onclick = closeComp;
+$('cmStart').onclick = async () => {
+  const files = cmSelected();
+  if (files.length < 1) { $('cmErr').textContent = '至少選一個檔'; return; }
+  if (files.length < 2 && document.querySelector('input[name=cmKind]:checked').value !== 'diff') {
+    $('cmErr').textContent = '合成至少要 2 個檔;只看一個檔請直接打開它'; return;
+  }
+  const box = $('cmRegion').value === 'view' ? (S.lastRange || S.bbox || (S.data ? dataBox(S.data) : null)) : null;
+  $('cmErr').textContent = ''; $('cmStart').disabled = true; $('cmCancel').hidden = false; $('cmProgWrap').hidden = false;
+  const diff = document.querySelector('input[name=cmKind]:checked').value === 'diff';
+  let st;
+  try {
+    st = await api('/api/composite/start', { files: JSON.stringify(diff ? [S.file] : files), bfiles: diff ? JSON.stringify(files) : null,
+      group: S.group, var: S.variable, weight: $('cmWeight').value,
+      idx: JSON.stringify(S.idx), qa: currentQa(), bbox: box ? JSON.stringify(box.map(v => +v.toFixed(4))) : null }, { quiet: true });
+  } catch (e) { $('cmErr').textContent = e.message; $('cmStart').disabled = false; $('cmCancel').hidden = true; return; }
+  cmJob = st.id;
+  const names = files.map(f => f.split('/').pop());
+  const span = names.length > 1 ? `${names[0]} … ${names[names.length - 1]}` : names[0];
+  clearInterval(cmPoll);
+  cmPoll = setInterval(async () => {
+    let s2;
+    try { s2 = await api('/api/composite/status', { id: cmJob }, { quiet: true, timeout: 15000 }); } catch { return; }
+    $('cmProg').style.width = `${(100 * s2.done / s2.total).toFixed(0)}%`;
+    $('cmProgText').textContent = `${s2.done} / ${s2.total} 個檔 · ${s2.n_points.toLocaleString()} 個有效像素 · ${s2.seconds} 秒${s2.current ? ' · ' + s2.current : ''}`;
+    if (s2.errors.length) $('cmErr').textContent = `${s2.errors.length} 個檔有問題:${s2.errors[s2.errors.length - 1]}`;
+    if (s2.status !== 'running') {
+      clearInterval(cmPoll); cmPoll = null;
+      $('cmCancel').hidden = true; $('cmStart').disabled = false;
+      if (s2.status === 'cancelled') $('cmProgText').textContent = `已取消(做了 ${s2.done} / ${s2.total} 個檔)。可以改設定再按「開始合成」。`;
+      else if (s2.used === 0) $('cmErr').textContent = '所選的檔在這個範圍內都沒有有效資料;試試範圍選「全部」或換檔。';
+      if (s2.status === 'done' && s2.used > 0) {
+        $('compModal').hidden = true;
+        enterComposite(compFromStatus(cmJob, s2, box));
+      }
+    }
+  }, 600);
+};
+$('cmCancel').onclick = () => { if (cmJob) api('/api/composite/cancel', { id: cmJob }, { quiet: true }).catch(() => {}); };
+
+// 合成用了哪些檔:日期摘要(一天 → 2026-01-02 · 14 軌 · UTC 00:39 – 01-03 00:20;多天 → 起 – 迄 · N 天)
+function dateSummary(files) {
+  if (!files.length) return '—';
+  const dates = [...new Set(files.map(f => f.date).filter(Boolean))].sort();
+  const starts = files.map(f => f.start).filter(Boolean).sort();
+  const ends = files.map(f => f.end || f.start).filter(Boolean).sort();   // GEMS、MODIS 檔名只有開始時間
+  const unit = files.some(f => f.orbit) ? '軌' : '個檔';
+  if (!dates.length) return `${files.length} ${unit}`;
+  if (dates.length === 1) {
+    const t = starts.length ? ` · UTC ${starts[0].slice(11)} – ${ends[ends.length - 1].slice(0, 10) === dates[0] ? '' : ends[ends.length - 1].slice(5, 10) + ' '}${ends[ends.length - 1].slice(11)}` : '';
+    return `${dates[0]} · ${files.length} ${unit}${t}`;
+  }
+  return `${dates[0]} – ${dates[dates.length - 1]} · ${dates.length} 天 · ${files.length} ${unit}`;
+}
+function compFromStatus(id, s2, box) {
+  const files = s2.files || [];
+  return { id, used: s2.used, total: s2.total, files, box, errors: s2.errors, diff: s2.diff, usedB: s2.used_b, outside: s2.outside || 0,
+           notes: s2.notes || [], qa: s2.qa, weightLabel: s2.weight_label, weight: s2.weight || 'file',
+           days: new Set(files.filter(f => f.set !== 'b').map(f => f.date).filter(Boolean)).size,
+           // 工具列只寫 B(A 是目前的檔,頂端已寫);匯出圖的副標題用完整的 A − B
+           span: s2.diff ? `B:${shortSummary(files.filter(f => f.set === 'b'))}` : dateSummary(files),
+           fullSpan: s2.diff ? `A ${shortSummary(files.filter(f => f.set === 'a'))} − B ${shortSummary(files.filter(f => f.set === 'b'))}` : dateSummary(files) };
+}
+const compSettingsText = c => `${c.qa === null || c.qa === undefined ? '不做 QA 篩選' : 'qa ≥ ' + c.qa} · ${c.weightLabel || '每個檔等權'}`;
+// 相減時工具列放得下的寫法:A 2026-01-02 04:02(1 軌)− B 01-01 – 01-10(10 天、12 軌)
+function shortSummary(files) {
+  if (!files.length) return '—';
+  const dates = [...new Set(files.map(f => f.date).filter(Boolean))].sort();
+  const unit = files.some(f => f.orbit) ? '軌' : '檔';
+  if (files.length === 1) return `${files[0].start || files[0].date || files[0].name}(1 ${unit})`;
+  if (dates.length <= 1) return `${dates[0] || ''}(${files.length} ${unit})`;
+  return `${dates[0]} – ${dates[dates.length - 1].slice(5)}(${dates.length} 天、${files.length} ${unit})`;
+}
+function renderCompFiles(c) {
+  const when = f => !f.start ? (f.date || '—') : !f.end ? f.start : f.start + ' – ' + f.end.slice(f.end.slice(0, 10) === f.start.slice(0, 10) ? 11 : 5);
+  const row = f => `<tr><td>${f.set === 'b' ? 'B' : (c.diff ? 'A' : '')}</td><td>${esc(when(f))}</td><td>${f.orbit ?? esc(f.mode || '')}</td><td>${esc(f.name)}</td></tr>`;
+  const outside = c.outside ? `<div class="help" style="margin-top:6px">另有 ${c.outside} 個所選的檔在範圍內沒有有效資料,沒有列出。</div>` : '';
+  const err = outside + (c.notes.length ? `<div class="warn" style="margin-top:6px">${c.notes.map(esc).join('<br>')}</div>` : '')
+            + (c.errors.length ? `<div class="err" style="margin-top:6px">略過 ${c.errors.length} 個:<br>${c.errors.map(esc).join('<br>')}</div>` : '');
+  $('compFiles').innerHTML = `<table style="font-size:13px;border-collapse:collapse"><tr style="color:var(--muted)"><td></td><td>時間(UTC)</td><td>軌道/模式</td><td>檔名</td></tr>${c.files.map(row).join('')}</table>${err}`;
+}
+$('compNcBtn').onclick = () => {
+  if (!S.composite) return;
+  const a = Object.assign(document.createElement('a'), {
+    href: urlOf('/api/composite/export', { id: S.composite.id, bbox: S.composite.box ? JSON.stringify(S.composite.box) : null,
+                                           res: $('compRes').value || S.data?.res || null, name: `${S.variable}_composite` }),
+  });
+  a.click();
+};
+$('compFilesBtn').onclick = () => { $('compFiles').hidden = !$('compFiles').hidden; $('compFilesBtn').classList.toggle('on', !$('compFiles').hidden); };
+
+function enterComposite(c, opt = {}) {
+  stopPlay();
+  S.composite = c;
+  // 合成用的 qa 在開始時就固定了;改輸入框不會重算,所以鎖住並說明
+  $('qa').disabled = true; $('qa').title = '合成時的 qa 門檻已固定;要換門檻請重新合成';
+  $('compSettings').textContent = compSettingsText(c);
+  $('compBar').hidden = false; $('dims').hidden = true;
+  $('compLabel').textContent = c.diff ? `相減:目前的檔 − ${c.usedB} 個檔的平均` : `合成:${c.used} 個檔`;
+  // 覆蓋數、標準差是「幾組」:每檔等權 = 檔,每天等權 = 天;像素等權只有一組,不提供
+  const w = { file: '檔', day: '天' }[c.weight];
+  $('compMode').innerHTML = c.diff
+    ? '<option value="diff">A − B</option><option value="mean">A(目前的檔)</option><option value="b">B(平均)</option>' + (w ? `<option value="bcount">B 覆蓋${w}數</option>` : '')
+    : '<option value="mean">平均</option>' + (w ? `<option value="count">覆蓋${w}數</option><option value="std">${w}間標準差</option>` : '');
+  if (c.diff) { S.prevCmap = $('cmap').value; $('cmap').value = 'RdBu'; }
+  $('compInfo').innerHTML = esc(c.span) + (c.outside ? ` · 另有 ${c.outside} 個檔在範圍內沒有有效資料(軌道沒經過或全被 qa 篩掉)` : '')
+    + (c.errors.length ? ` · <span class="warn">${c.errors.length} 個檔讀取失敗</span>` : '')
+    + (c.notes.length ? ` · <span class="warn">${c.notes.length} 則提醒(見檔案清單)</span>` : '');
+  $('compInfo').title = [...c.notes, ...c.errors].join('\n');
+  renderCompFiles(c);
+  $('compFiles').hidden = true; $('compFilesBtn').classList.remove('on');
+  $('prevFile').disabled = $('nextFile').disabled = true;
+  $('fileName').textContent = c.diff ? '相減結果(A = 目前的檔)' : `合成結果(${c.used} 個檔)`;
+  S.bbox = c.box || null; S.lastRange = c.box || null; S.manualRange = false;
+  if (opt.mode) $('compMode').value = opt.mode;
+  if (opt.res !== undefined) $('compRes').value = opt.res || '';
+  closeInspector();
+  loadSlice(true);
+}
+function leaveComposite(reload = true) {
+  if (!S.composite) return;
+  if (S.composite.diff && S.prevCmap) $('cmap').value = S.prevCmap;
+  S.composite = null;
+  $('qa').disabled = false; $('qa').title = '';
+  $('compBar').hidden = true; $('compFiles').hidden = true;
+  setFileName();
+  renderDims(); updateFileNav();
+  if (reload) loadSlice(true);
+}
+$('compExit').onclick = () => leaveComposite(true);
+$('compMode').onchange = () => { S.manualRange = false; closeInspector(); loadSlice(true); };
+$('compRes').onchange = () => { closeInspector(); loadSlice(false); };
+
+// ---------------------------------------------------------------- 控制項
+function redraw() {
+  ensureColorscale().then(async () => {
+    saveHash();
+    if (!S.data) return;
+    if (isProj()) return drawProjected();
+    draw();
+    if (S.data.kind === 'swath') renderImage();
+  });
+}
+$('cmap').onchange = redraw;
+$('vmin').onchange = $('vmax').onchange = () => {
+  // 打到一半、打錯、下限不小於上限:兩格標紅、先不畫(不自動對調:先改下限時上限還是舊值,一對調就亂了)
+  const lo = parseFloat($('vmin').value), hi = parseFloat($('vmax').value);
+  const ok = Number.isFinite(lo) && Number.isFinite(hi) && lo < hi;
+  for (const id of ['vmin', 'vmax']) {
+    $(id).classList.toggle('bad', !ok);
+    $(id).title = ok ? '' : !Number.isFinite(parseFloat($(id).value)) ? '要填數字(可以用 1e-4 這種寫法)' : '下限要小於上限';
+  }
+  if (!ok) return;
+  S.manualRange = true; updateLock(); redraw();
+};
+$('lockR').onclick = () => { S.manualRange = !S.manualRange; updateLock(); saveHash(); };
+function updateLock() {
+  $('lockR').classList.toggle('on', S.manualRange);
+  $('lockR').textContent = S.manualRange ? '已鎖定' : '鎖定範圍';
+}
+$('crev').onchange = redraw;
+// 「自動」:依目前畫面重算色階。資料若還是舊畫面抓的(縮放時沒重抓),先依目前畫面重抓一次
+async function autoRange(mode) {
+  if (!isProj() && !S.composite && JSON.stringify(S.bbox || null) !== JSON.stringify(S.sliceView || null)) await loadSlice(false, { view: true });
+  applyAuto(mode);
+}
+$('autoP').onclick = () => autoRange('p');
+$('autoM').onclick = () => autoRange('m');
+$('log').onchange = () => applyAuto('p');
+$('qa').onchange = () => {
+  S.qaTouched = true;
+  const v = $('qa').value.trim();
+  if (v !== '' && Number.isFinite(+v)) $('qa').value = String(Math.min(1, Math.max(0, +v)));   // qa_value 只在 0–1
+  loadSlice(false);
+};
+// 圖層:勾了就重畫,並記到設定(下次開啟照舊)
+const layersParam = () => LAYER_IDS.filter(k => $(k).checked).join(',');
+for (const k of LAYER_IDS) $(k).onchange = () => { saveSetting({ [k]: $(k).checked }); loadSlice(false); };
+document.addEventListener('click', e => { if (!e.target.closest('#geoBox')) $('geoBox').open = false; });   // 點別處收起選單
+$('proj').onchange = () => { closeInspector(); S.pv = null; loadSlice(false); };
+const QUICK = { global: [-180, -90, 180, 90], eastasia: [95, 5, 150, 50], taiwan: [118, 21.5, 122.6, 26.5] };
+$('quick').onchange = () => {
+  const k = $('quick').value;
+  $('quick').value = '';
+  if (!k || !S.data) return;
+  const box = k === 'data' ? null : QUICK[k];
+  if (isProj() && S.pv?.proj === 'ortho' && globe) {
+    const b = box || dataBox(S.data);
+    const v = { lng: (b[0] + b[2]) / 2, lat: (b[1] + b[3]) / 2, altitude: altFor(b) };
+    globe.pointOfView(v, 800);
+    // 程式移動視角不會觸發 controls 的 end 事件:自己記下,匯出、連結才會是這個區域
+    S.pv.clon = +v.lng.toFixed(2); S.pv.clat = +v.lat.toFixed(2); S.pv.alt = v.altitude;
+    saveHash(); status();
+    return;
+  }
+  S.bbox = box; S.lastRange = box ? box.slice() : null;
+  loadSlice(false);
+};
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => S.data && draw());
+// 工具列出現/消失、屬性展開會改變繪圖區高度,但不會觸發視窗 resize:自己轉發,Plotly 與影像才會跟著重排
+let lastWrap = '';
+new ResizeObserver(() => {
+  const k = `${$('plotwrap').clientWidth}x${$('plotwrap').clientHeight}`;
+  if (k !== lastWrap) { lastWrap = k; window.dispatchEvent(new Event('resize')); }
+}).observe($('plotwrap'));
+let resizeT;
+window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (isProj()) drawProjected(); else if (S.data?.kind === 'swath') renderImage(); }, 300); });
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('compModal').hidden) { closeComp(); return; }   // 游標在輸入框裡也能關
+  if (e.target.matches('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!$('compModal').hidden) return;
+  if (e.key === '/' && !$('search').hidden) { if (document.body.classList.contains('side-off')) setSide(true); e.preventDefault(); $('search').focus(); return; }
+  if (e.key === '[') { e.preventDefault(); setSide(document.body.classList.contains('side-off')); return; }
+  if (e.key === 'ArrowLeft' && !S.composite) { e.preventDefault(); stepFile(-1); }
+  else if (e.key === 'ArrowRight' && !S.composite) { e.preventDefault(); stepFile(1); }
+  else if (e.key === ',') stepDim(firstPlayDim(), -1);
+  else if (e.key === '.') stepDim(firstPlayDim(), 1);
+  else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+  else if (e.key === 'Escape') closeInspector();
+});
+
+// ---------------------------------------------------------------- 啟動:網址有狀態就還原
+// 自己用 replaceState 寫網址不會觸發 hashchange;貼上別的連結、按上一頁才會
+window.addEventListener('hashchange', () => {
+  const h = readHash();
+  if (h && (h.file !== S.file || h.variable !== S.variable || h.group !== S.group)) restore(h);
+});
+async function restore(h) {
+  if (h.cmap) $('cmap').value = h.cmap;
+  $('crev').checked = !!h.crev;
+  S.pendingUnit = h.unit || null;
+  if (h.log) $('log').checked = true;
+  if (h.qa) { $('qa').value = h.qa; S.qaTouched = true; }
+  if (h.proj) {
+    $('proj').value = h.proj;
+    if (h.pc) S.pv = { proj: h.proj, clon: h.pc[0], clat: h.pc[1], alt: h.pc[2], extent: h.pe };
+  }
+  if (h.range) { S.manualRange = true; $('vmin').value = h.range[0]; $('vmax').value = h.range[1]; }
+  await openDir(parentOf(h.file)).catch(() => openDir(null));
+  await openFile(h.file, { group: h.group, variable: h.variable, keep: { box: h.box, idx: h.idx } });
+  if (h.cj) {   // 連結裡有合成:伺服器上還在(只留最近 3 個,重啟會清掉)就接回去,否則講清楚
+    try {
+      const s2 = await api('/api/composite/status', { id: h.cj }, { quiet: true });
+      if (s2.status === 'done' && s2.used > 0) return enterComposite(compFromStatus(h.cj, s2, h.cb), { mode: h.cm, res: h.cg });
+    } catch { /* 已過期 */ }
+    $('note').hidden = false;
+    $('note').innerHTML = '<span class="warn">這個連結原本是合成結果,但伺服器上已經沒有了(只保留最近 3 個,重啟也會清掉)。下面是單一檔;要看合成請重新按「合成…」。</span>';
+  }
+}
+// ---------------------------------------------------------------- 設定(存在伺服器端,App 與瀏覽器共用)
+const AVATAR_COLORS = ['#2f6fde', '#0f9d8a', '#7c4dff', '#e0567a', '#e8833a', '#5f7d2b', '#455a64', '#b8860b'];
+let ME = { name: '', photo: false };   // 這台電腦帳號的全名、有沒有大頭照(本機讀,不外送)
+let SET = { name: '', avatar_color: '#2f6fde', credit: false, use_system: true, borders: false, grid: false, theme: 'system', cmap: 'Jet', coast: true, qa: 0.5, speed: 700, update_repo: 'Alex870521/ncglobe', auto_update: true };
+const initials = n => !n ? '?' : /[\u3400-\u9fff]/.test(n) ? n.replace(/\s+/g, '').slice(-2)
+  : n.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+function applySettings(first = false) {
+  if (SET.theme === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.dataset.theme = SET.theme;
+  const sys = SET.use_system !== false;
+  const name = SET.name || (sys ? ME.name : '');
+  if (sys && ME.photo && !SET.name) $('avatar').innerHTML = '<img src="/api/me/photo" alt="">';
+  else $('avatar').textContent = initials(name);
+  $('avatar').style.background = SET.avatar_color;
+  $('meName').textContent = name || '設定名字';
+  $('meName').classList.toggle('empty', !name);
+  if (first) {   // 地圖預設值只在開頁時套用:網址、畫面上改過的優先
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (!h.get('c') && CS_NAMES.includes(SET.cmap)) $('cmap').value = SET.cmap;
+    for (const k of LAYER_IDS) $(k).checked = !!SET[k];
+    if (!h.get('q')) $('qa').value = String(SET.qa);
+  }
+}
+async function loadSettings() {
+  try { SET = { ...SET, ...(await api('/api/settings', {}, { quiet: true, timeout: 5000 })) }; } catch {}
+  try { ME = await api('/api/me', {}, { quiet: true, timeout: 8000 }); } catch {}
+  applySettings(true);
+}
+async function saveSetting(patch) {
+  $('setErr').textContent = '';
+  try {
+    const r = await fetch('/api/settings', { method: 'POST', headers: { 'X-Ncglobe': 'settings', 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    const themeChanged = j.theme !== SET.theme;
+    SET = j;
+    applySettings();
+    if (themeChanged) { if (globe) globe.backgroundColor(css('--bg')); if (S.data) redraw(); }
+  } catch (e) { $('setErr').textContent = `存不了設定:${e.message}`; }
+}
+async function openSettings(focusName = false) {
+  $('sName').value = SET.name; $('sCredit').checked = SET.credit; $('sSystem').checked = SET.use_system !== false;
+  $('sName').placeholder = SET.use_system !== false && ME.name ? '留空 = 用這台電腦帳號的名字' : '你的名字'; $('sTheme').value = SET.theme;
+  $('sCmap').innerHTML = CS_NAMES.map(n => `<option>${esc(n)}</option>`).join(''); $('sCmap').value = SET.cmap;
+  $('sQa').value = SET.qa; $('sSpeed').value = String(SET.speed);
+  $('sRepo').value = SET.update_repo; $('sAuto').checked = SET.auto_update;
+  $('sColors').innerHTML = AVATAR_COLORS.map(c => `<button class="swatch${c === SET.avatar_color ? ' on' : ''}" style="background:${c}" data-c="${c}" aria-label="頭像顏色 ${c}"></button>`).join('');
+  $('sColors').querySelectorAll('.swatch').forEach(b => b.onclick = () => { saveSetting({ avatar_color: b.dataset.c }); $('sColors').querySelectorAll('.swatch').forEach(x => x.classList.toggle('on', x === b)); });
+  $('sRecentMsg').textContent = `${store.get('recent', []).length} 個`;
+  $('setErr').textContent = ''; $('sUpdMsg').textContent = '';
+  $('setModal').hidden = false;
+  (focusName ? $('sName') : $('setClose')).focus();
+  try {
+    const a = await api('/api/about', {}, { quiet: true });
+    $('sVersion').textContent = `ncglobe ${a.version}${a.app ? '(App)' : ''}`;
+    $('sRoots').innerHTML = a.roots.length ? a.roots.map(esc).join('<br>') : '還沒有(用「檔案 › 開啟…」選資料夾)';
+    $('sFile').textContent = a.settings_file;
+    $('sIndexMsg').textContent = `檔名清單 ${a.index_mb} MB · 搜尋子資料夾用;檔案搬動後搜尋結果對不上時清除`;
+  } catch {}
+}
+function closeSettings() { $('setModal').hidden = true; $('setBtn').focus(); }
+$('setBtn').onclick = () => openSettings();
+$('setClose').onclick = closeSettings;
+$('setModal').addEventListener('click', e => { if (e.target === $('setModal')) closeSettings(); });
+$('setModal').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeSettings(); } });
+$('sName').onchange = () => saveSetting({ name: $('sName').value.trim() });
+$('sCredit').onchange = () => saveSetting({ credit: $('sCredit').checked });
+$('sSystem').onchange = () => saveSetting({ use_system: $('sSystem').checked });
+$('sTheme').onchange = () => saveSetting({ theme: $('sTheme').value });
+$('sCmap').onchange = () => saveSetting({ cmap: $('sCmap').value });
+$('sQa').onchange = () => { const v = Math.min(1, Math.max(0, +$('sQa').value || 0)); $('sQa').value = v; saveSetting({ qa: v }); };
+$('sSpeed').onchange = () => saveSetting({ speed: +$('sSpeed').value });
+$('sRepo').onchange = () => { saveSetting({ update_repo: $('sRepo').value.trim() }).then(() => checkUpdate(true)); };
+$('sAuto').onchange = () => saveSetting({ auto_update: $('sAuto').checked });
+$('sCheck').onclick = () => checkUpdate(true);
+$('sClearIndex').onclick = async () => {
+  try {
+    const r = await fetch('/api/index/clear', { method: 'POST', headers: { 'X-Ncglobe': 'settings' }, body: '{}' });
+    const j = await r.json(); $('sIndexMsg').textContent = `已清除 ${j.removed} 個檔名清單;下次搜尋會重新掃描`;
+  } catch (e) { $('sIndexMsg').textContent = e.message; }
+};
+$('sClearRecent').onclick = () => { store.set('recent', []); $('sRecentMsg').textContent = '已清除'; if (S.dir && !S.dir.path) renderDir(); };
+
+// ---- 檢查更新:設定了 GitHub 專案才問;有新版就在側欄底部顯示「更新 x.y.z」
+async function checkUpdate(manual = false) {
+  if (!manual && (!SET.auto_update || !SET.update_repo)) return;
+  let u;
+  try { u = await api('/api/update', manual ? { force: 1 } : {}, { quiet: true, timeout: 15000 }); }
+  catch (e) { if (manual) $('sUpdMsg').textContent = e.message; return; }
+  if (manual) $('sUpdMsg').textContent = !u.repo ? '沒有設定更新來源' : u.error ? u.error
+    : u.newer ? `有新版 ${u.latest}` : `已是最新(最新 ${u.latest || u.current})`;
+  $('sUpdMsg').classList.toggle('bad', !!u.error);
+  $('updBtn').hidden = !u.newer;
+  if (u.newer) {
+    $('updBtn').textContent = `更新 ${u.latest}`;
+    $('updBtn').title = `ncglobe ${u.latest} 已發佈(目前 ${u.current})。點一下打開下載頁。` + (u.notes ? `\n\n${u.notes.slice(0, 400)}` : '');
+    $('updBtn').onclick = () => window.open(u.url, '_blank');
+  }
+}
+setInterval(() => checkUpdate(), 6 * 3600 * 1000);
+
+(async () => {
+  await loadSettings();
+  const h = readHash(); if (h) restore(h); else openDir(new URLSearchParams(location.hash.slice(1)).get('d') || null);   // #d= 由 App 的「開啟資料夾」帶入
+  setTimeout(() => checkUpdate(), 3000);
+})();
+</script>
+</body>
+</html>

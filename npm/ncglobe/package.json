@@ -1,0 +1,35 @@
+{
+  "name": "ncglobe",
+  "version": "0.0.0",
+  "description": "Browser viewer for NetCDF/HDF files: folders, slices, satellite L2 swaths, composites and a rotating globe",
+  "bin": {
+    "ncglobe": "bin/ncglobe.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {},
+  "license": "MIT",
+  "author": "Chih-Yu Chan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Alex870521/ncglobe.git"
+  },
+  "homepage": "https://github.com/Alex870521/ncglobe#readme",
+  "bugs": "https://github.com/Alex870521/ncglobe/issues",
+  "keywords": [
+    "netcdf",
+    "hdf",
+    "satellite",
+    "sentinel-5p",
+    "tropomi",
+    "modis",
+    "viewer",
+    "globe",
+    "geospatial"
+  ]
+}

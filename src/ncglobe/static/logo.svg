@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <title>ncglobe</title>
+  <desc>Balanced lowercase nc lettering on a dark globe with a mint observation orbit.</desc>
+  <circle cx="128" cy="128" r="100" fill="#122b3e"/>
+  <path d="M68 151.5V93.5M68 116C68 86 116 86 116 116V151.5" stroke="#f4faf9" stroke-width="13" stroke-linecap="round"/>
+  <path d="M183.355265 100.284711A27 29 0 1 0 183.355265 144.715289" stroke="#f4faf9" stroke-width="13" stroke-linecap="round"/>
+  <path d="M37 164C8 204 160 210 224 140" stroke="#122b3e" stroke-width="16" stroke-linecap="round"/>
+  <path d="M37 164C8 204 160 210 224 140" stroke="#4ce0ba" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="205" cy="64" r="8" fill="#4ce0ba"/>
+</svg>

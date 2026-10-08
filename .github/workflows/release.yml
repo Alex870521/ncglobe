@@ -1,0 +1,81 @@
+# 發佈:推 v* 標籤(版本要和 pyproject.toml 一致)→ 在三個平台建執行檔 → 發佈到 npm 與 GitHub Releases。
+# 需要的 secret:NPM_TOKEN(npmjs.com → Access Tokens → Granular,可發佈 ncglobe 與 ncglobe-* 套件)。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15,       platform: darwin-arm64 }
+          - { os: macos-15-intel, platform: darwin-x64 }
+          - { os: windows-latest, platform: win32-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.13' }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install
+        run: python -m pip install -e ".[build,dev]"
+      - name: Tests
+        if: matrix.platform == 'darwin-arm64'
+        run: python -m pytest -q
+      - name: Coastline data (GSHHG l/i/h are bundled)
+        run: ncglobe --install-gshhg
+      - name: Executable + npm platform package
+        run: |
+          python scripts/build_exe.py --onedir
+          python scripts/build_npm.py --platform-only
+      - name: macOS app
+        if: runner.os == 'macOS'
+        run: |
+          python scripts/build_exe.py --app
+          ditto -c -k --keepParent dist/ncglobe.app "dist/ncglobe-macos-${{ matrix.platform == 'darwin-arm64' && 'arm64' || 'x64' }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.platform }}
+          path: |
+            dist/npm/ncglobe-*.tgz
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.13' }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, registry-url: 'https://registry.npmjs.org' }
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Version matches tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VER=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          test "v$VER" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != pyproject v$VER"; exit 1; }
+          echo "VER=$VER" >> "$GITHUB_ENV"
+      - name: Main npm package
+        run: python scripts/build_npm.py --main-only darwin-arm64 darwin-x64 win32-x64
+      - name: Publish to npm (platform packages first)
+        if: startsWith(github.ref, 'refs/tags/')
+        env: { NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}' }
+        run: |
+          for f in dist/*.tgz dist/npm/ncglobe-*-*.tgz; do
+            [ -f "$f" ] && [ "$(basename "$f")" != "ncglobe-$VER.tgz" ] && npm publish "$f" --access public
+          done
+          npm publish "dist/npm/ncglobe-$VER.tgz" --access public
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "ncglobe $VER" --generate-notes
