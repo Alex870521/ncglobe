@@ -1,9 +1,9 @@
 """Pack the npm packages for the current platform (after scripts/build_exe.py --onedir).
 
-    .venv/bin/python scripts/build_npm.py     # → dist/npm/ncglobe-<ver>.tgz + ncglobe-<platform>-<ver>.tgz
+    .venv/bin/python scripts/build_npm.py     # → dist/npm/ncglobe-<ver>.tgz + alex870521-ncglobe-<platform>-<ver>.tgz
 
 Layout follows esbuild/Biome: `ncglobe` holds only bin/ncglobe.js; each platform package
-(`ncglobe-darwin-arm64`, `ncglobe-win32-x64`, …) holds the PyInstaller folder build and declares
+(`@alex870521/ncglobe-darwin-arm64`, `@alex870521/ncglobe-win32-x64`, …) holds the PyInstaller folder build and declares
 os/cpu, so npm installs just the one matching the machine. Run this on each platform; every run
 lists all platforms it has packed so far as optionalDependencies of the main package.
 
@@ -11,7 +11,7 @@ CI (.github/workflows/release.yml) runs it in two steps: `--platform-only` on ea
 `--main-only darwin-arm64 darwin-x64 win32-x64` once, so the main package lists every platform.
 
 Local install test (no publishing):
-    npm i -g --prefix /tmp/ncg dist/npm/ncglobe-<platform>-<ver>.tgz dist/npm/ncglobe-<ver>.tgz
+    npm i -g --prefix /tmp/ncg dist/npm/alex870521-ncglobe-<platform>-<ver>.tgz dist/npm/ncglobe-<ver>.tgz
 """
 import argparse
 import json
@@ -23,6 +23,8 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# 平台套件放在帳號範圍下:0.1.0 不帶範圍的 ncglobe-win32-x64 被 npm 的垃圾套件檢查擋下
+SCOPE = '@alex870521'
 ARCH = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'x64', 'amd64': 'x64'}
 META = {'license': 'MIT', 'author': 'Chih-Yu Chan',
         'repository': {'type': 'git', 'url': 'git+https://github.com/Alex870521/ncglobe.git'},
@@ -52,7 +54,7 @@ def pack_platform(version: str, out: Path, stage: Path) -> None:
         shutil.rmtree(plat)
     shutil.copytree(build, plat / 'ncglobe', symlinks=False)   # npm 打包會丟掉符號連結(PyInstaller 在 macOS 用它連 Python 與 .dylib)
     (plat / 'package.json').write_text(json.dumps({
-        'name': f'ncglobe-{os_}-{cpu}', 'version': version,
+        'name': f'{SCOPE}/ncglobe-{os_}-{cpu}', 'version': version,
         'description': f'ncglobe executable for {os_}-{cpu} (installed by the ncglobe package)', 'os': [os_], 'cpu': [cpu],
         'files': ['ncglobe'], **META}, indent=2))
     print('→', pack(plat, out))
@@ -66,7 +68,7 @@ def pack_main(version: str, out: Path, stage: Path, platforms: list[str]) -> Non
     shutil.copy2(ROOT / 'README.md', main_pkg / 'README.md')
     meta = json.loads((main_pkg / 'package.json').read_text())
     meta['version'] = version
-    meta['optionalDependencies'] = {f'ncglobe-{p}': version for p in platforms}
+    meta['optionalDependencies'] = {f'{SCOPE}/ncglobe-{p}': version for p in platforms}
     (main_pkg / 'package.json').write_text(json.dumps(meta, indent=2, ensure_ascii=False))
     print('→', pack(main_pkg, out))
 

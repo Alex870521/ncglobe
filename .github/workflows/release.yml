@@ -1,5 +1,5 @@
 # 發佈:推 v* 標籤(版本要和 pyproject.toml 一致)→ 在三個平台建執行檔 → 發佈到 npm 與 GitHub Releases。
-# 需要的 secret:NPM_TOKEN(npmjs.com → Access Tokens → Granular,可發佈 ncglobe 與 ncglobe-* 套件)。
+# 需要的 secret:NPM_TOKEN(npmjs.com → Access Tokens → Granular,可發佈 ncglobe 與 @alex870521/ncglobe-* 套件)。
 name: release
 
 on:
@@ -44,7 +44,7 @@ jobs:
         with:
           name: build-${{ matrix.platform }}
           path: |
-            dist/npm/ncglobe-*.tgz
+            dist/npm/*.tgz
             dist/*.zip
           if-no-files-found: error
 
@@ -68,15 +68,13 @@ jobs:
           echo "VER=$VER" >> "$GITHUB_ENV"
       - name: Main npm package
         run: python scripts/build_npm.py --main-only darwin-arm64 darwin-x64 win32-x64
+      - name: GitHub Release (npm tarballs attached, so they can be published by hand if npm fails)
+        if: startsWith(github.ref, 'refs/tags/')
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip dist/npm/*.tgz --title "ncglobe $VER" --generate-notes
       - name: Publish to npm (platform packages first)
         if: startsWith(github.ref, 'refs/tags/')
         env: { NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}' }
         run: |
-          for f in dist/*.tgz dist/npm/ncglobe-*-*.tgz; do
-            [ -f "$f" ] && [ "$(basename "$f")" != "ncglobe-$VER.tgz" ] && npm publish "$f" --access public
-          done
+          for f in dist/npm/alex870521-ncglobe-*-*.tgz; do npm publish "$f" --access public; done
           npm publish "dist/npm/ncglobe-$VER.tgz" --access public
-      - name: GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        env: { GH_TOKEN: '${{ github.token }}' }
-        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "ncglobe $VER" --generate-notes

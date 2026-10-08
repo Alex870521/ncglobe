@@ -1,6 +1,6 @@
 [project]
 name = "ncglobe"
-version = "0.1.0"
+version = "0.1.1"
 description = "Browser viewer for NetCDF/HDF files: folders, slices, satellite L2 swaths, composites and a rotating globe"
 readme = "README.md"
 license = "MIT"
