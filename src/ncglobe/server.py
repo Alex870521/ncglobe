@@ -2782,6 +2782,12 @@ class Server(ThreadingHTTPServer):
 
 def main():
     global CACHE_BYTES
+    # Windows 的主控台 / 管線常是 cp1252,印中文訊息會 UnicodeEncodeError 直接結束:一律寫 UTF-8,印不出來的字換掉
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            pass
     if BUNDLE:   # cartopy 先找內建的 Natural Earth,沒有才下載到使用者的資料目錄
         import cartopy
         cartopy.config['pre_existing_data_dir'] = str(BUNDLE / 'cartopy')

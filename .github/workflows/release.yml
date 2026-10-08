@@ -17,6 +17,7 @@ jobs:
           - { os: macos-15-intel, platform: darwin-x64 }
           - { os: windows-latest, platform: win32-x64 }
     runs-on: ${{ matrix.os }}
+    env: { PYTHONUTF8: '1' }   # Windows 預設 cp1252:建置腳本與 ncglobe 的中文訊息才印得出來
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
