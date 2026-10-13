@@ -648,6 +648,11 @@ def _is_passthrough(d: Path) -> bool:
     return bool(subs) and len(subs) == 1 and _month_dirs(subs[0]) is None   # 跟 _follow_single 同一個停止條件
 
 
+def _pretty(label: str) -> str:
+    """S5P 的產品資料夾補底線到固定長度(NO2___、CO____):顯示時拿掉尾巴的底線。"""
+    return re.sub(r'_+(?=$|/|-)', '', label) or label
+
+
 def _listed_dirs(c: Path) -> list[dict]:
     if not has_data_files(c):   # 底下一個資料檔都沒有的資料夾不列
         return []
@@ -657,25 +662,60 @@ def _listed_dirs(c: Path) -> list[dict]:
         for m in months:
             if has_data_files(m):
                 name, target = _follow_single(m, f'{c.name}-{m.name}')
-                out.append({'name': name, 'path': str(target)})
+                out.append({'name': _pretty(name), 'path': str(target)})
         return out
     name, target = _follow_single(c, c.name)
-    return [{'name': name, 'path': str(target)}]
+    return [{'name': _pretty(name), 'path': str(target)}]
+
+
+def root_label(r: Path) -> str:
+    """最上層資料夾給人看的名稱:家目錄、外接硬碟的名字;其他用完整路徑。"""
+    if r == Path.home():
+        return '家目錄'
+    if r.parent == Path('/Volumes'):
+        return f'{r.name}(外接)'
+    return str(r)
+
+
+LIST_BUDGET = 1.5   # 秒:列一個資料夾時,判斷子資料夾有沒有資料檔最多等這麼久
+_scan_pool = None
+
+
+def _scan_executor():
+    global _scan_pool
+    if _scan_pool is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _scan_pool = ThreadPoolExecutor(8, thread_name_prefix='scan')
+    return _scan_pool
 
 
 def list_dir(path: str | None) -> dict:
     if not path:
         return {'path': None, 'parent': None, 'app': IN_APP,
-                'dirs': [{'name': str(r), 'path': str(r)} for r in roots()], 'files': []}
+                'dirs': [{'name': root_label(r), 'path': str(r)} for r in roots()], 'files': []}
     p = resolve(path)
-    dirs, files = [], []
+    dirs, files, subdirs = [], [], []
     for c in sorted(p.iterdir(), key=lambda c: c.name.lower()):
-        if c.name.startswith('.'):
+        if c.name.startswith('.') or (p == Path.home() and c.name == 'Library'):   # 跟 Finder 一樣藏起來
             continue
-        if c.is_dir():
+        try:
+            if c.is_dir():
+                subdirs.append(c)
+            elif c.suffix.lower() in NC_SUFFIXES:
+                files.append({'name': c.name, 'path': str(c), 'size': c.stat().st_size, **file_meta(c.name)})
+        except OSError:
+            pass
+    # 每個子資料夾要掃到第一個資料檔才知道列不列:同時掃,最多等 LIST_BUDGET 秒。
+    # 雲端硬碟(OneDrive、Google Drive)、很大的資料夾掃不完就先列出來,背景繼續掃,下次就準了。
+    # 以前一個一個掃,家目錄第一次打開要一分多鐘,畫面上什麼都沒有
+    from concurrent.futures import wait
+    futs = [_scan_executor().submit(has_data_files, c) for c in subdirs]
+    wait(futs, timeout=LIST_BUDGET)
+    for c, fu in zip(subdirs, futs):
+        if not fu.done():
+            dirs.append({'name': _pretty(c.name), 'path': str(c), 'unsure': True})
+        elif fu.exception() is None and fu.result():
             dirs += _listed_dirs(c)
-        elif c.suffix.lower() in NC_SUFFIXES:
-            files.append({'name': c.name, 'path': str(c), 'size': c.stat().st_size, **file_meta(c.name)})
     parent = None
     rs = roots()
     if p not in rs:

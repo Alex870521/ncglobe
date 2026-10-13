@@ -612,11 +612,20 @@ const CS_NAMES = [...document.querySelectorAll('#cmap option')].map(o => o.value
 async function openDir(path) {
   if (!navAuto) navFwd.length = 0;   // 自己點進別的資料夾:返回的紀錄作廢
   let d;
+  // 列很大的資料夾(家目錄、雲端硬碟)要一兩秒:側欄先說在讀,不要像沒點到
+  const slow = setTimeout(() => {
+    $('side').innerHTML = '';
+    $('side').append(Object.assign(document.createElement('div'), { className: 'item dim', textContent: `讀取 ${path ? path.split('/').pop() : '資料夾'}…` }));
+  }, 300);
   try { d = await api('/api/ls', { path }, { quiet: true }); }
-  catch (e) { showError(e); if (path) return openDir(null); return; }   // 打不開就回根目錄,不要停在空白
-  if (!S.roots) {
-    try { const r = d.path ? await api('/api/ls', {}, { quiet: true }) : d; S.roots = r.dirs.map(x => x.path); S.app = r.app; }
-    catch { S.roots = []; }
+  catch (e) { clearTimeout(slow); showError(e); if (path) return openDir(null); return; }   // 打不開就回根目錄,不要停在空白
+  clearTimeout(slow);
+  if (!S.roots || !S.rootNames) {
+    try {
+      const r = d.path ? await api('/api/ls', {}, { quiet: true }) : d;
+      S.roots = r.dirs.map(x => x.path); S.app = r.app;
+      S.rootNames = Object.fromEntries(r.dirs.map(x => [x.path, x.name]));   // 家目錄、KINGSTON(外接)
+    } catch { S.roots = []; }
   }
   S.dir = d;
   if (d.path) S.files = d.files.map(f => f.path);
@@ -651,7 +660,8 @@ function renderDir() {
   if (d.parent) side.append(item('↑', '..', '', () => { $('search').value = ''; openDir(d.parent); }));
   const dirs = d.dirs.filter(x => match(x.name)), files = d.files.filter(x => match(x.name + ' ' + (x.start || '') + ' ' + (x.date || '')));
   if (dirs.length) side.append(sec('資料夾'));
-  dirs.forEach(x => side.append(item('▸', x.name, '', () => { $('search').value = ''; openDir(x.path); })));
+  dirs.forEach(x => side.append(item('▸', x.name, x.unsure ? '…' : '', () => { $('search').value = ''; openDir(x.path); }, false,
+    x.unsure ? `${x.path}\n這個資料夾很大(或在雲端硬碟),還沒確定裡面有沒有資料檔` : x.path)));
   const passNote = canPass() ? ' · ● = 在目前地圖範圍內有資料'
     : (S.variable && S.data?.geo && d.files.some(f => f.orbit) ? ' · 放大到一個區域後,會用 ● 標出經過那裡的軌道' : '');
   if (d.files.length) side.append(sec((q ? `檔案(${files.length} / ${d.files.length})` : `檔案(${d.files.length})`) + passNote, LEGEND_FILES));
@@ -823,12 +833,12 @@ function renderCrumb() {
   if (!p) return;
   const root = (S.roots || []).filter(r => p === r || p.startsWith(r + '/')).sort((a, b) => b.length - a.length)[0];
   if (!root) { c.append(' / ' + p); return; }
-  c.append(' / ', link(root, () => openDir(root)));
+  c.append(' / ', link(S.rootNames?.[root] || root, () => openDir(root)));
   let acc = root;
   for (const seg of p.slice(root.length).split('/').filter(Boolean)) {
     acc += '/' + seg;
     const to = acc;
-    c.append(' / ', link(seg, () => openDir(to)));
+    c.append(' / ', link(seg.replace(/_+$/, '') || seg, () => openDir(to)));
   }
 }
 // 名稱從中間省略到剛好放得下(只靠 CSS 會從尾巴截,S5P 長變數名全變成同一個開頭)
@@ -2010,20 +2020,24 @@ const cmSel = new Set();   // 已勾選的檔(路徑):不放在勾選框上,換�
 // 選檔範圍:目前的資料夾,或往上幾層(含所有子資料夾)—— 庫存是「產品/年/月」分資料夾放的,
 // 跨月份(季、年)合成要從上一層選
 function cmFiles() { return cmTree ? cmTree.files : (S.dir?.files || []).map(f => ({ ...f, rel: '' })); }
+// 選項的值:'' = 目前資料夾這一層;路徑 = 那個資料夾含所有子資料夾
 function cmScopes() {
-  const out = [{ path: S.dir.path, label: `目前的資料夾(${S.dir.path.split('/').pop()})` }];
+  const tidy = p => { const n = p.split('/').pop(); return n.replace(/_+$/, '') || n; };   // NO2___ → NO2
+  const name = tidy(S.dir.path);
+  const out = [{ path: '', label: `目前的資料夾(${name},只有這一層)` }];
+  if (S.dir.dirs.length) out.push({ path: S.dir.path, label: `目前的資料夾(${name},含所有子資料夾)` });   // 產品資料夾底下分年月放
   let p = S.dir.path;
   for (let i = 1; i <= 4; i++) {
     const up = parentOf(p);
     if (!up || up === p || !S.roots?.some(r => up === r || up.startsWith(r + '/'))) break;
-    out.push({ path: up, label: `${up.split('/').pop()}(含所有子資料夾)` });
+    out.push({ path: up, label: `${tidy(up)}(含所有子資料夾)` });
     p = up;
   }
   return out;
 }
 async function cmSetScope() {
   const path = $('cmScope').value;
-  if (path === S.dir.path) { cmTree = null; $('cmScopeInfo').textContent = ''; }
+  if (!path) { cmTree = null; $('cmScopeInfo').textContent = ''; }
   else {
     $('cmScopeInfo').textContent = '讀取中…';
     try { cmTree = await api('/api/tree', { path }, { quiet: true }); }
@@ -2090,7 +2104,9 @@ $('compBtn').onclick = () => {
   $('cmScope').innerHTML = cmScopes().map(o => `<option value="${esc(o.path)}">${esc(o.label)}</option>`).join('');
   $('cmScopeInfo').textContent = '';
   $('cmList').innerHTML = '';
-  cmRender();
+  // 這一層沒有檔(例如在產品資料夾,檔都在年月子資料夾裡):直接改成含子資料夾,不要給一個空清單
+  if (!S.dir.files.length && S.dir.dirs.length) { $('cmScope').value = S.dir.path; cmSetScope(); }
+  else cmRender();
   $('cmErr').textContent = ''; $('cmProgWrap').hidden = true; $('cmCancel').hidden = true; $('cmStart').disabled = false;
   $('compModal').hidden = false;
   stopPlay();
@@ -2485,7 +2501,7 @@ async function openFolder(path) {
   const r = await fetch('/api/open', { method: 'POST', headers: { 'X-Ncglobe': 'settings', 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
-  S.roots = j.roots;
+  S.roots = j.roots; S.rootNames = null;   // 下次列根目錄時重拿名稱
   return j.path;
 }
 async function pickGo(path) {
