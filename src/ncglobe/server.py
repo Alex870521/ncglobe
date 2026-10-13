@@ -2527,13 +2527,23 @@ def _version_tuple(v: str) -> tuple:
     return tuple(int(x) for x in re.findall(r'\d+', v)[:3]) or (0,)
 
 
+def install_kind() -> str:
+    """怎麼裝的,決定「更新」要怎麼做:app = 下載新的 App;npm = 執行 npm 指令;exe / source = 看 Release 頁。"""
+    if IN_APP:
+        return 'app'
+    if BUNDLE:
+        return 'npm' if 'node_modules' in Path(sys.executable).parts else 'exe'
+    return 'source'
+
+
 def update_check(force: bool = False) -> dict:
     """問設定的 GitHub 專案最新的 Release;比目前版本新就回傳版本與頁面網址。沒設定來源就不連網。"""
     import urllib.request
     from ncglobe import __version__
     st = load_settings()
     repo = st['update_repo']
-    out = {'current': __version__, 'repo': repo, 'latest': None, 'newer': False, 'url': None, 'notes': '', 'error': None}
+    out = {'current': __version__, 'repo': repo, 'latest': None, 'newer': False, 'url': None, 'notes': '', 'error': None,
+           'install': install_kind()}
     if not repo:
         return out
     hit = _update_cache.get(repo)

@@ -217,3 +217,14 @@ def test_open_folder_from_the_page_adds_a_root_and_is_remembered(http, data, tmp
     assert code == 200 and target in j['roots']
     assert _get(http + '/api/ls?' + urllib.parse.urlencode({'path': target}))[0] == 200
     assert s.load_folders() == [home / 'sat']                                 # 下次啟動自動加回來
+
+
+def test_install_kind_decides_how_to_update(monkeypatch):
+    monkeypatch.setattr(s, 'IN_APP', False)
+    monkeypatch.setattr(s, 'BUNDLE', None)
+    assert s.install_kind() == 'source'
+    monkeypatch.setattr(s, 'BUNDLE', s.Path('/x'))
+    monkeypatch.setattr(s.sys, 'executable', '/u/lib/node_modules/@alex870521/ncglobe-darwin-arm64/ncglobe/ncglobe')
+    assert s.install_kind() == 'npm'
+    monkeypatch.setattr(s.sys, 'executable', r'C:\tools\ncglobe\ncglobe.exe')
+    assert s.install_kind() == 'exe'

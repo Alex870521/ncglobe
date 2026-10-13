@@ -235,6 +235,8 @@
   kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
   .help { color: var(--muted); font-size: 13px; }
   .pk-list { height: min(48vh, 420px); overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+  .cmdrow { display: flex; gap: 8px; align-items: center; }
+  .cmdrow code { flex: 1; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); font: 13px ui-monospace, Menlo, Consolas, monospace; overflow-x: auto; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -389,6 +391,17 @@
       <div class="spacer"></div>
       <button class="btn" id="pkCancel">取消</button>
       <button class="btn on" id="pkOpen" disabled>開啟這個資料夾</button>
+    </div>
+  </div>
+</div>
+<!-- npm 版的更新:給指令,不是下載頁 -->
+<div class="modal-bg" id="updModal" hidden>
+  <div class="modal" role="dialog" aria-label="更新 ncglobe" style="width:min(540px,92vw)">
+    <div class="modal-head">更新到 ncglobe <span id="umVer" style="margin-left:4px"></span><div class="spacer"></div><button class="btn ibtn" id="umClose" title="關閉(Esc)" aria-label="關閉" data-icon="x"></button></div>
+    <div class="modal-body">
+      <div class="help">在終端機執行這行指令:</div>
+      <div class="cmdrow"><code id="umCmd"></code><button class="btn" id="umCopy">複製</button></div>
+      <div class="help">裝好後按左上角的電源鍵結束 ncglobe,再重新執行 <code>ncglobe</code>。<a id="umNotes" target="_blank" rel="noopener">這一版改了什麼</a></div>
     </div>
   </div>
 </div>
@@ -2298,7 +2311,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !$('compModal').hidden) { closeComp(); return; }   // 游標在輸入框裡也能關
   // 瀏覽器版的 ⌘O / Ctrl+O:開啟資料夾(不是瀏覽器自己的開檔);App 版由選單處理
   if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'o' && !S.app) { e.preventDefault(); pickOpen(); return; }
-  if (!$('pickModal').hidden) return;
+  if (!$('pickModal').hidden || !$('updModal').hidden) return;
   if (e.target.matches('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
   if (!$('compModal').hidden) return;
   if (e.key === '/' && !$('search').hidden) { if (document.body.classList.contains('side-off')) setSide(true); e.preventDefault(); $('search').focus(); return; }
@@ -2428,17 +2441,36 @@ async function checkUpdate(manual = false) {
   let u;
   try { u = await api('/api/update', manual ? { force: 1 } : {}, { quiet: true, timeout: 15000 }); }
   catch (e) { if (manual) $('sUpdMsg').textContent = e.message; return; }
+  const cmd = u.newer && u.install === 'npm' ? `npm install -g ncglobe@${u.latest}` : null;   // npm 裝的:給指令,不是下載頁
   if (manual) $('sUpdMsg').textContent = !u.repo ? '沒有設定更新來源' : u.error ? u.error
-    : u.newer ? `有新版 ${u.latest}` : `已是最新(最新 ${u.latest || u.current})`;
+    : cmd ? `有新版 ${u.latest}:在終端機執行 ${cmd}` : u.newer ? `有新版 ${u.latest}` : `已是最新(最新 ${u.latest || u.current})`;
   $('sUpdMsg').classList.toggle('bad', !!u.error);
   $('updBtn').hidden = !u.newer;
   if (u.newer) {
     $('updBtn').textContent = `更新 ${u.latest}`;
-    $('updBtn').title = `ncglobe ${u.latest} 已發佈(目前 ${u.current})。點一下打開下載頁。` + (u.notes ? `\n\n${u.notes.slice(0, 400)}` : '');
-    $('updBtn').onclick = () => window.open(u.url, '_blank');
+    $('updBtn').title = `ncglobe ${u.latest} 已發佈(目前 ${u.current})。` + (cmd ? '點一下看更新指令。' : '點一下打開下載頁。') + (u.notes ? `\n\n${u.notes.slice(0, 400)}` : '');
+    $('updBtn').onclick = cmd ? () => showUpdateCmd(cmd, u) : () => window.open(u.url, '_blank');
   }
 }
 setInterval(() => checkUpdate(), 6 * 3600 * 1000);
+function showUpdateCmd(cmd, u) {
+  $('umVer').textContent = u.latest;
+  $('umCmd').textContent = cmd;
+  $('umCopy').textContent = '複製';
+  $('umNotes').href = u.url || '#';
+  $('umNotes').hidden = !u.url;
+  $('updModal').hidden = false;
+  $('umCopy').focus();
+}
+function closeUpdate() { $('updModal').hidden = true; $('updBtn').focus(); }
+$('umCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('umCmd').textContent); $('umCopy').textContent = '已複製'; }
+  catch { getSelection().selectAllChildren($('umCmd')); $('umCopy').textContent = '按 ' + MOD + 'C 複製'; }
+};
+$('umClose').onclick = closeUpdate;
+$('updModal').addEventListener('click', e => { if (e.target === $('updModal')) closeUpdate(); });
+$('updModal').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeUpdate(); } });
+
 // ---- 瀏覽器版的「開啟資料夾」:從家目錄、外接硬碟一層層點進去;選定後伺服器才開始讀那裡的檔
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 const PK = { path: null, seq: 0 };
