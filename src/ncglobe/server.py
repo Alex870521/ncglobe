@@ -93,6 +93,7 @@ LAT_NAMES = ('latitude', 'lat', 'LAT', 'Latitude', 'nav_lat', 'y_lat')
 LON_NAMES = ('longitude', 'lon', 'LON', 'Longitude', 'nav_lon', 'x_lon')
 
 ROOTS: list[Path] = []
+AUTO_VOLUMES = False   # macOS:外接硬碟(/Volumes 底下)也自動可讀,插拔即時反映
 
 # 前端用的兩個大套件:第一次從 CDN 下載、核對雜湊後存在本機,之後頁面直接從本機讀
 # (Plotly 從 cdnjs 下載實測要 5 秒,每次開頁都等;離線也能用)。雜湊跟 HTML 的 integrity 同一組。
@@ -147,10 +148,70 @@ class TooBig(Exception):
 
 # ------------------------------------------------------------------ 路徑安全
 
+_volumes_cache: tuple[float, list[Path]] = (-1e9, [])
+MNT_NOWAIT = 2
+MNT_DONTBROWSE = 0x00100000   # Finder 不顯示的系統磁碟(Recovery、VM…)
+
+
+def _darwin_mounts() -> list[tuple[str, int]]:
+    """macOS 目前掛載的磁碟 (掛載點, 旗標):直接問核心(getfsstat),不必執行 mount 指令。"""
+    import ctypes
+
+    class Statfs(ctypes.Structure):   # <sys/mount.h> 的 struct statfs(64 位元 inode 版)
+        _fields_ = [('f_bsize', ctypes.c_uint32), ('f_iosize', ctypes.c_int32),
+                    ('f_blocks', ctypes.c_uint64), ('f_bfree', ctypes.c_uint64), ('f_bavail', ctypes.c_uint64),
+                    ('f_files', ctypes.c_uint64), ('f_ffree', ctypes.c_uint64), ('f_fsid', ctypes.c_int32 * 2),
+                    ('f_owner', ctypes.c_uint32), ('f_type', ctypes.c_uint32), ('f_flags', ctypes.c_uint32),
+                    ('f_fssubtype', ctypes.c_uint32), ('f_fstypename', ctypes.c_char * 16),
+                    ('f_mntonname', ctypes.c_char * 1024), ('f_mntfromname', ctypes.c_char * 1024),
+                    ('f_flags_ext', ctypes.c_uint32), ('f_reserved', ctypes.c_uint32 * 7)]
+
+    libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+    try:
+        fn = libc['getfsstat$INODE64']   # Intel:預設的 getfsstat 是舊的 32 位元 inode 版
+    except AttributeError:
+        fn = libc.getfsstat              # Apple 晶片只有 64 位元版
+    fn.restype, fn.argtypes = ctypes.c_int, [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    n = fn(None, 0, MNT_NOWAIT)
+    if n <= 0:
+        return []
+    buf = (Statfs * (n + 8))()   # 多留幾格:兩次呼叫之間剛好插上隨身碟
+    n = fn(buf, ctypes.sizeof(buf), MNT_NOWAIT)
+    return [(os.fsdecode(b.f_mntonname), b.f_flags) for b in buf[:max(n, 0)]]
+
+
+def browsable_volumes(mounts: list[tuple[str, int]]) -> list[Path]:
+    """Finder 會顯示的磁碟:/Volumes 底下、沒有 MNT_DONTBROWSE;開機磁碟的捷徑(= 整台電腦)不算。"""
+    return [Path(p) for p, flags in mounts
+            if p.startswith('/Volumes/') and not flags & MNT_DONTBROWSE and Path(p).resolve() != Path('/')]
+
+
+def external_volumes() -> list[Path]:
+    """目前掛著的外接硬碟、隨身碟、網路磁碟;幾秒查一次,啟動後才插上的也讀得到。"""
+    global _volumes_cache
+    if not AUTO_VOLUMES:
+        return []
+    t, vols = _volumes_cache
+    if time.monotonic() - t > 5:
+        try:
+            vols = browsable_volumes(_darwin_mounts())
+        except (OSError, AttributeError, ValueError):
+            vols = []
+        _volumes_cache = (time.monotonic(), vols)
+    return vols
+
+
+def roots() -> list[Path]:
+    """可讀的最上層資料夾:啟動時給的 + 外接硬碟(已在某個 root 底下的不重複列)。"""
+    rs = list(ROOTS)
+    rs += [v for v in external_volumes() if not any(v == r or v.is_relative_to(r) for r in ROOTS)]
+    return rs
+
+
 def resolve(path: str) -> Path:
     """只允許 roots 底下的路徑(擋 ../ 與符號連結跳出去)。"""
     p = Path(path).expanduser().resolve()
-    if not any(p == r or p.is_relative_to(r) for r in ROOTS):
+    if not any(p == r or p.is_relative_to(r) for r in roots()):
         raise Forbidden(path)
     return p
 
@@ -462,7 +523,7 @@ def _follow_single(d: Path, label: str) -> tuple[str, Path]:
 
 def _is_passthrough(d: Path) -> bool:
     """列表裡被合併掉的中間層(年底下只有月、或只有一個子資料夾):「..」不要停在這裡。"""
-    if any(d == r for r in ROOTS):
+    if d in roots():
         return False
     if _month_dirs(d) is not None:
         return True
@@ -488,7 +549,7 @@ def _listed_dirs(c: Path) -> list[dict]:
 def list_dir(path: str | None) -> dict:
     if not path:
         return {'path': None, 'parent': None,
-                'dirs': [{'name': str(r), 'path': str(r)} for r in ROOTS], 'files': []}
+                'dirs': [{'name': str(r), 'path': str(r)} for r in roots()], 'files': []}
     p = resolve(path)
     dirs, files = [], []
     for c in sorted(p.iterdir(), key=lambda c: c.name.lower()):
@@ -499,9 +560,10 @@ def list_dir(path: str | None) -> dict:
         elif c.suffix.lower() in NC_SUFFIXES:
             files.append({'name': c.name, 'path': str(c), 'size': c.stat().st_size, **file_meta(c.name)})
     parent = None
-    if p not in ROOTS:
+    rs = roots()
+    if p not in rs:
         q = p.parent
-        while q not in ROOTS and q != q.parent and _is_passthrough(q):
+        while q not in rs and q != q.parent and _is_passthrough(q):
             q = q.parent
         parent = str(q)
     return {'path': str(p), 'parent': parent, 'dirs': dirs, 'files': files}
@@ -2476,7 +2538,7 @@ def clear_search_index() -> dict:
 def about() -> dict:
     from ncglobe import __version__
     size = sum(f.stat().st_size for f in INDEX_DIR.glob('*.json.gz')) if INDEX_DIR.exists() else 0
-    return {'version': __version__, 'roots': [str(r) for r in ROOTS], 'app': IN_APP, 'settings_file': str(SETTINGS_FILE),
+    return {'version': __version__, 'roots': [str(r) for r in roots()], 'app': IN_APP, 'settings_file': str(SETTINGS_FILE),
             'index_dir': str(INDEX_DIR), 'index_mb': round(size / 1e6, 1), 'cache_mb': CACHE_BYTES // 1024**2,
             'gshhg': gshhg_installed()}
 
@@ -2781,7 +2843,7 @@ class Server(ThreadingHTTPServer):
 
 
 def main():
-    global CACHE_BYTES
+    global CACHE_BYTES, AUTO_VOLUMES
     # Windows 的主控台 / 管線常是 cp1252,印中文訊息會 UnicodeEncodeError 直接結束:一律寫 UTF-8,印不出來的字換掉
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -2796,6 +2858,8 @@ def main():
     ap.add_argument('--port', type=int, default=8765)
     ap.add_argument('--cache-mb', type=int, default=3000, help='memory for decoded arrays (default 3000)')
     ap.add_argument('--no-browser', action='store_true')
+    ap.add_argument('--no-volumes', action='store_true',
+                    help="macOS: don't make external drives under /Volumes readable automatically")
     ap.add_argument('--install-gshhg', action='store_true',
                     help='download the GSHHG shoreline (~150 MB) for finer coastlines, then exit')
     args = ap.parse_args()
@@ -2803,6 +2867,8 @@ def main():
         install_gshhg()
         return
     CACHE_BYTES = args.cache_mb * 1024**2
+    # App 版也列:只問核心掛了哪些磁碟、不讀內容,不會觸發權限詢問;點進去時 macOS 才問一次(所有卸除式卷宗共用)
+    AUTO_VOLUMES = sys.platform == 'darwin' and not args.no_volumes
     open_file = None
     paths = args.paths or [os.getcwd()]
     if IN_APP:   # App 版只讀使用者在「開啟」對話框選的地方(之後由 macapp 加入);不預設家目錄,
@@ -2841,7 +2907,7 @@ def main():
         threading.Thread(target=warm, daemon=True).start()
     else:
         print('提示:海岸線用 Natural Earth;要更細的 GSHHG(約 40 m)請執行 ncglobe --install-gshhg', file=sys.stderr)
-    print(f'ncglobe → {url}  (roots: {", ".join(map(str, ROOTS))}, cache {args.cache_mb} MB)  Ctrl+C 結束')
+    print(f'ncglobe → {url}  (roots: {", ".join(map(str, roots()))}, cache {args.cache_mb} MB)  Ctrl+C 結束')
     if IN_APP:   # App 自己的視窗(WKWebView)+ Finder「打開方式」;伺服器改在背景執行緒
         from ncglobe import macapp
 

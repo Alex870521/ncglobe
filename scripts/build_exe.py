@@ -90,6 +90,9 @@ def finish_app(app: Path) -> None:
     info.update({
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},   # WKWebView 連 http://127.0.0.1
         'NSHumanReadableCopyright': 'ncglobe',
+        # 點進外接硬碟、網路磁碟時 macOS 跳出的權限詢問上顯示的說明(所有卸除式卷宗共用一次同意)
+        'NSRemovableVolumesUsageDescription': 'ncglobe 要讀取外接硬碟上的 NetCDF / HDF 資料檔。',
+        'NSNetworkVolumesUsageDescription': 'ncglobe 要讀取網路磁碟上的 NetCDF / HDF 資料檔。',
         'CFBundleShortVersionString': version, 'CFBundleVersion': version,
         'CFBundleDisplayName': 'ncglobe',
         'CFBundleDocumentTypes': [{

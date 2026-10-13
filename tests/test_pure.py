@@ -82,3 +82,31 @@ def test_outline_layers_are_independent():
     assert s._layers({'ly': 'coast,grid,evil'}) == {'coast', 'grid'}
     assert s._layers({'coast': '0'}) == frozenset() and s._layers({}) == {'coast'}   # 舊網址
     assert s._nice_step(0.7) == 1 and s._nice_step(100) == 30
+
+
+def test_external_volumes_follow_finder_visibility():
+    mounts = [('/', 0x4000), ('/System/Volumes/Data', s.MNT_DONTBROWSE), ('/Volumes/Recovery', s.MNT_DONTBROWSE),
+              ('/Volumes/My Drive', 0x18), ('/Volumes/data', 0x18)]
+    assert [str(p) for p in s.browsable_volumes(mounts)] == ['/Volumes/My Drive', '/Volumes/data']
+
+
+def test_volumes_only_extend_roots_when_enabled(tmp_path, monkeypatch):
+    vol = tmp_path / 'vol'
+    vol.mkdir()
+    monkeypatch.setattr(s, 'ROOTS', [tmp_path / 'data'])
+    monkeypatch.setattr(s, '_volumes_cache', (float('inf'), [vol]))   # 不跑 mount
+    monkeypatch.setattr(s, 'AUTO_VOLUMES', False)
+    assert s.roots() == [tmp_path / 'data']
+    monkeypatch.setattr(s, 'AUTO_VOLUMES', True)
+    assert s.roots() == [tmp_path / 'data', vol]
+    assert s.resolve(str(vol)) == vol.resolve()
+
+
+def test_app_also_lists_external_drives(tmp_path, monkeypatch):
+    vol = tmp_path / 'vol'
+    vol.mkdir()
+    monkeypatch.setattr(s, 'IN_APP', True)
+    monkeypatch.setattr(s, 'ROOTS', [])                                   # App 剛打開:還沒選任何資料夾
+    monkeypatch.setattr(s, 'AUTO_VOLUMES', True)
+    monkeypatch.setattr(s, '_volumes_cache', (float('inf'), [vol]))
+    assert [x['path'] for x in s.list_dir(None)['dirs']] == [str(vol)]

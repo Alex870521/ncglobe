@@ -40,12 +40,12 @@ uv venv && uv pip install -e .
 
 ```bash
 ncglobe ~/data                                  # 指定要看的資料夾(可以給好幾個)
-ncglobe ~/data /Volumes/MyDrive --port 8800      # 換 port
+ncglobe ~/data --port 8800                      # 換 port
 ncglobe some_file.nc                            # 直接打開這個檔
 ncglobe --install-gshhg                         # 下載最細的 GSHHG 海岸線(約 150 MB)
 ```
 
-伺服器只聽 `127.0.0.1`、只讀啟動時指定(或在 App 裡用「開啟」選)的資料夾。
+伺服器只聽 `127.0.0.1`、只讀啟動時指定(或在 App 裡用「開啟」選)的資料夾。macOS 上另外會自動列出外接硬碟、隨身碟與網路磁碟(瀏覽器版與 App 都會;`/Volumes` 底下 Finder 看得到的那些,啟動後才插上的重新整理頁面就會出現);不想要就加 `--no-volumes`。
 
 **使用手冊**:[docs/使用手冊.md](docs/使用手冊.md)(任務導向,附截圖)。
 
