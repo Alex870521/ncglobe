@@ -51,6 +51,7 @@
   .grp:hover { color: var(--accent); }
   .grp .tw { width: 10px; color: var(--muted); font-size: 11px; }
   .grp .cnt { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .grp .gn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .side-head { padding: 12px 14px 8px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
   .brand { font-weight: 650; font-size: 18px; display: flex; align-items: center; gap: 10px; letter-spacing: .2px; }
   .brand img { display: block; flex-shrink: 0; }
@@ -168,7 +169,8 @@
   .status { padding: 6px 14px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); background: var(--panel); display: flex; gap: 14px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
   .note { padding: 6px 14px; font-size: 13px; color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--border); }
   .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 24px; }
-  .err { color: var(--bad); max-width: 560px; }
+  .err { color: var(--bad); max-width: min(560px, 100%); overflow-wrap: anywhere; }   /* 長檔名、路徑沒有空白:不斷行就撐出框外 */
+  .err > span { min-width: 0; }
   /* 疊在地圖上的訊息(錯誤、沒有資料):要有底色與外框,不然跟圖混在一起看不清 */
   /* 不用左側色條:淡色調底 + 細邊框 + 類型色小圖示 */
   #empty .err, #empty .msg { background: color-mix(in srgb, var(--bad) 7%, var(--panel)); color: var(--text);
@@ -206,7 +208,8 @@
   .warn { color: var(--bad); }
   .item .ic.pass { color: var(--accent); }
   .tag { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
-  #compBar { flex-wrap: nowrap; }
+  #compBar { flex-wrap: wrap; }   /* 視窗窄時換行:不換行的話「離開合成」會被擠到畫面外 */
+  #compBar > #compExit { margin-left: auto; }
   #compBar > * { flex-shrink: 0; }
   #compBar > #compInfo { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #compBar > .spacer { display: none; }
@@ -487,7 +490,7 @@ function urlOf(path, params) {
 $('quitBtn').onclick = async () => {
   if (!confirm('結束 ncglobe?目前的畫面與合成結果會關閉。')) return;
   try { await fetch('/api/quit', { method: 'POST', headers: { 'X-Ncglobe': 'quit' } }); } catch {}
-  document.body.innerHTML = '<div style="display:grid;place-items:center;height:100vh;color:var(--muted);font:15px system-ui">ncglobe 已結束,可以關閉這個分頁。</div>';
+  document.body.innerHTML = '<div style="position:fixed;inset:0;display:grid;place-items:center;color:var(--muted);font:15px system-ui">ncglobe 已結束,可以關閉這個分頁。</div>';
 };
 
 async function api(path, params = {}, opt = {}) {
@@ -951,7 +954,11 @@ function renderFileSide(want = null) {
     const open = hasCur || !groupCollapsed(gname, g.group === mainGroup);
     const gh = Object.assign(document.createElement('div'), { className: 'grp' });
     gh.dataset.grp = gname;
-    gh.innerHTML = `<span class="tw">${open ? '▾' : '▸'}</span><span>${esc(gname)}</span><span class="cnt">${vars.length}</span>`;
+    // 很深的群組(PRODUCT/SUPPORT_DATA/DETAILED_RESULTS/…)只顯示最後兩層,完整路徑放在滑鼠提示;不然側欄被撐得左右捲動
+    const parts = gname.split('/');
+    const short = parts.length > 2 ? '…/' + parts.slice(-2).join('/') : gname;
+    gh.title = gname;
+    gh.innerHTML = `<span class="tw">${open ? '▾' : '▸'}</span><span class="gn">${esc(short)}</span><span class="cnt">${vars.length}</span>`;
     gh.onclick = () => toggleGroup(gname);
     side.append(gh);
     if (!open) S.closedGroups.add(gname); else S.closedGroups.delete(gname);
