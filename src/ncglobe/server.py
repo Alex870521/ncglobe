@@ -30,6 +30,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -151,6 +152,25 @@ class TooBig(Exception):
 _volumes_cache: tuple[float, list[Path]] = (-1e9, [])
 MNT_NOWAIT = 2
 MNT_DONTBROWSE = 0x00100000   # Finder 不顯示的系統磁碟(Recovery、VM…)
+
+
+def spawn_run(argv: list[str], timeout: float, **kw) -> subprocess.CompletedProcess:
+    """執行外部指令:一律用 posix_spawn(close_fds=False + 絕對路徑),不用 fork。
+
+    macOS 上 fork 出來的子行程會先跑各函式庫的 atfork 清理;PROJ(cartopy 用的)的那段
+    在子行程裡會 segfault,系統跳出「Python 意外結束」。posix_spawn 不跑這些清理。"""
+    return subprocess.run(argv, capture_output=True, timeout=timeout, close_fds=False, **kw)
+
+
+def open_browser(url: str) -> None:
+    """macOS 用 open 指令(posix_spawn);webbrowser 在 macOS 是 fork 出 osascript,見 spawn_run。"""
+    if sys.platform == 'darwin':
+        try:
+            spawn_run(['/usr/bin/open', url], 10)
+            return
+        except (OSError, subprocess.SubprocessError):
+            pass
+    webbrowser.open(url)
 
 
 def _darwin_mounts() -> list[tuple[str, int]]:
@@ -2749,19 +2769,19 @@ def system_profile() -> dict:
     if sys.platform == 'darwin':
         user = os.environ.get('USER') or ''
         try:
-            out = subprocess.run(['dscl', '.', '-read', f'/Users/{user}', 'JPEGPhoto'], capture_output=True, text=True, timeout=5).stdout
+            out = spawn_run(['/usr/bin/dscl', '.', '-read', f'/Users/{user}', 'JPEGPhoto'], 5, text=True).stdout
             hexs = ''.join(out.split()[1:]) if out.startswith('JPEGPhoto') else ''
             photo = bytes.fromhex(hexs) if hexs else None
         except (OSError, ValueError, subprocess.SubprocessError):
             photo = None
         if not photo:   # 沒有內嵌照片:帳號指定的圖檔(可能是 heic/tif),轉成 PNG
             try:
-                out = subprocess.run(['dscl', '.', '-read', f'/Users/{user}', 'Picture'], capture_output=True, text=True, timeout=5).stdout
+                out = spawn_run(['/usr/bin/dscl', '.', '-read', f'/Users/{user}', 'Picture'], 5, text=True).stdout
                 pic = out.split(':', 1)[1].strip() if ':' in out else ''
                 if pic and Path(pic).is_file():
                     dst = VENDOR_DIR / 'avatar.png'
                     VENDOR_DIR.mkdir(parents=True, exist_ok=True)
-                    subprocess.run(['sips', '-s', 'format', 'png', '-Z', '256', pic, '--out', str(dst)], capture_output=True, timeout=15)
+                    spawn_run(['/usr/bin/sips', '-s', 'format', 'png', '-Z', '256', pic, '--out', str(dst)], 15)
                     photo = dst.read_bytes() if dst.exists() else None
             except (OSError, subprocess.SubprocessError):
                 photo = None
@@ -3161,7 +3181,7 @@ def main():
             from ncglobe import macapp
             return macapp.run(None, f'http://127.0.0.1:{args.port}/', lambda d: None, open_file)
         if not args.no_browser:
-            webbrowser.open(url)
+            open_browser(url)
         return
     srv.daemon_threads = True
     # HDF5 每個變數的解壓快取預設只有 4 MB;壓縮塊比它大時,每次讀取都得重新解壓整塊
@@ -3188,7 +3208,7 @@ def main():
                 ROOTS.append(d)
         return macapp.run(srv, f'http://127.0.0.1:{args.port}/', add_root, open_file)
     if not args.no_browser:
-        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.5, lambda: open_browser(url)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

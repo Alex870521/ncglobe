@@ -90,6 +90,15 @@ def test_external_volumes_follow_finder_visibility():
     assert [str(p) for p in s.browsable_volumes(mounts)] == ['/Volumes/My Drive', '/Volumes/data']
 
 
+def test_external_commands_never_fork():
+    # macOS:fork 出的子行程會跑 PROJ 的 atfork 清理而 segfault(系統跳出崩潰訊息)。外部指令一律走 spawn_run
+    import inspect
+    import re
+    src = inspect.getsource(s)
+    body = src.replace(inspect.getsource(s.spawn_run), '').replace(inspect.getsource(s.open_browser), '')
+    assert not re.search(r'subprocess\.(run|Popen|call|check_output)\(|os\.(system|popen|fork)\(|webbrowser\.open\(', body)
+
+
 def test_volumes_only_extend_roots_when_enabled(tmp_path, monkeypatch):
     vol = tmp_path / 'vol'
     vol.mkdir()
