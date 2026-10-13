@@ -234,6 +234,7 @@
   .comp-badge { color: var(--accent); font-weight: 600; }
   kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
   .help { color: var(--muted); font-size: 13px; }
+  .pk-list { height: min(48vh, 420px); overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
 </style>
 </head>
 <body>
@@ -372,6 +373,22 @@
       <div class="set-row" style="align-items:flex-start"><label>可讀的資料夾</label><div id="sRoots" class="set-msg" style="word-break:break-all"></div></div>
       <div class="set-row"><label>設定檔</label><span class="set-msg" id="sFile"></span></div>
       <div class="set-msg bad" id="setErr"></div>
+    </div>
+  </div>
+</div>
+<!-- 瀏覽器版的「開啟資料夾」(App 版用選單「檔案 › 開啟…」的原生對話框) -->
+<div class="modal-bg" id="pickModal" hidden>
+  <div class="modal" role="dialog" aria-label="開啟資料夾" style="width:min(560px,92vw)">
+    <div class="modal-head">開啟資料夾<div class="spacer"></div><button class="btn ibtn" id="pkClose" title="關閉(Esc)" aria-label="關閉" data-icon="x"></button></div>
+    <div class="modal-body">
+      <input type="text" id="pkPath" placeholder="貼上資料夾路徑後按 Enter,或從下面一層層點進去" spellcheck="false" aria-label="資料夾路徑">
+      <div class="pk-list" id="pkList"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="set-msg" id="pkMsg"></span><span class="err" id="pkErr"></span>
+      <div class="spacer"></div>
+      <button class="btn" id="pkCancel">取消</button>
+      <button class="btn on" id="pkOpen" disabled>開啟這個資料夾</button>
     </div>
   </div>
 </div>
@@ -581,7 +598,10 @@ async function openDir(path) {
   let d;
   try { d = await api('/api/ls', { path }, { quiet: true }); }
   catch (e) { showError(e); if (path) return openDir(null); return; }   // 打不開就回根目錄,不要停在空白
-  if (!S.roots) { try { S.roots = (await api('/api/ls', {}, { quiet: true })).dirs.map(x => x.path); } catch { S.roots = []; } }
+  if (!S.roots) {
+    try { const r = d.path ? await api('/api/ls', {}, { quiet: true }) : d; S.roots = r.dirs.map(x => x.path); S.app = r.app; }
+    catch { S.roots = []; }
+  }
   S.dir = d;
   if (d.path) S.files = d.files.map(f => f.path);
   renderCrumb();
@@ -606,10 +626,12 @@ function renderDir() {
   const q = $('search').value.trim().toLowerCase();
   const match = n => !q || n.toLowerCase().includes(q);
   side.innerHTML = '';
+  if (!d.path && !S.app) side.append(item('+', '開啟資料夾…', MOD + 'O', pickOpen, false, '從家目錄或外接硬碟選一個資料夾'));
   if (!d.path) renderRecent(side);   // 根目錄:最近開過的檔
-  if (!d.path && !d.dirs.length)     // App 版:還沒選任何資料夾(只讀使用者選的地方,macOS 不會一直跳權限詢問)
+  if (!d.path && !d.dirs.length)     // 還沒選任何資料夾(App 版只讀使用者選的地方,macOS 不會一直跳權限詢問)
     side.append(Object.assign(document.createElement('div'), { className: 'hint', style: 'padding:16px 14px;color:var(--muted);font-size:13px;line-height:1.6',
-      textContent: '還沒有開啟任何資料夾。用選單「檔案 › 開啟…」(⌘O)選一個資料夾或檔案。' }));
+      textContent: S.app ? '還沒有開啟任何資料夾。用選單「檔案 › 開啟…」(⌘O)選一個資料夾或檔案。'
+                         : '還沒有開啟任何資料夾。按上面的「開啟資料夾…」選一個。' }));
   if (d.parent) side.append(item('↑', '..', '', () => { $('search').value = ''; openDir(d.parent); }));
   const dirs = d.dirs.filter(x => match(x.name)), files = d.files.filter(x => match(x.name + ' ' + (x.start || '') + ' ' + (x.date || '')));
   if (dirs.length) side.append(sec('資料夾'));
@@ -709,14 +731,16 @@ function renderRecent(side) {
   const roots = S.roots || [];
   for (const r of list) {
     const name = r.path.split('/').pop();
-    // App 版只讀用「開啟」選過的資料夾:不在裡面的最近檔標灰,點了告訴他怎麼辦,不要丟 403
+    // 只讀得到開啟過的資料夾:不在裡面的最近檔標灰。App 版點了告訴他怎麼辦;瀏覽器版直接開啟它所在的資料夾
     const ok = !roots.length || roots.some(x => r.path === x || r.path.startsWith(x.replace(/\/$/, '') + '/'));
-    const open = ok ? () => openFile(r.path, { group: r.group, variable: r.variable })
-      : () => showError(`「${name}」不在目前開啟的資料夾裡。用選單「檔案 › 開啟…」(⌘O)選它所在的資料夾(${parentOf(r.path)}),或直接選這個檔。`);
+    const go = () => openFile(r.path, { group: r.group, variable: r.variable });
+    const open = ok ? go
+      : S.app ? () => showError(`「${name}」不在目前開啟的資料夾裡。用選單「檔案 › 開啟…」(⌘O)選它所在的資料夾(${parentOf(r.path)}),或直接選這個檔。`)
+      : async () => { try { await openFolder(parentOf(r.path)); go(); } catch (e) { showError(e); } };
     const el = item('◷', r.label || name, '', open, false,
-      ok ? `${r.path}\n變數:${r.variable}` : `${r.path}\n不在目前開啟的資料夾裡:先用 ⌘O 開啟它所在的資料夾`,
-      [r.label ? name : '', r.variable, ok ? '' : '需要先開啟資料夾'].filter(Boolean).join(' · '));
-    if (!ok) el.classList.add('dim');
+      ok ? `${r.path}\n變數:${r.variable}` : S.app ? `${r.path}\n不在目前開啟的資料夾裡:先用 ⌘O 開啟它所在的資料夾` : `${r.path}\n點一下會開啟它所在的資料夾`,
+      [r.label ? name : '', r.variable, ok ? '' : S.app ? '需要先開啟資料夾' : '點一下開啟所在資料夾'].filter(Boolean).join(' · '));
+    if (!ok && S.app) el.classList.add('dim');
     side.append(el);
   }
 }
@@ -2272,6 +2296,9 @@ window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTi
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !$('compModal').hidden) { closeComp(); return; }   // 游標在輸入框裡也能關
+  // 瀏覽器版的 ⌘O / Ctrl+O:開啟資料夾(不是瀏覽器自己的開檔);App 版由選單處理
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'o' && !S.app) { e.preventDefault(); pickOpen(); return; }
+  if (!$('pickModal').hidden) return;
   if (e.target.matches('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
   if (!$('compModal').hidden) return;
   if (e.key === '/' && !$('search').hidden) { if (document.body.classList.contains('side-off')) setSide(true); e.preventDefault(); $('search').focus(); return; }
@@ -2367,7 +2394,7 @@ async function openSettings(focusName = false) {
   try {
     const a = await api('/api/about', {}, { quiet: true });
     $('sVersion').textContent = `ncglobe ${a.version}${a.app ? '(App)' : ''}`;
-    $('sRoots').innerHTML = a.roots.length ? a.roots.map(esc).join('<br>') : '還沒有(用「檔案 › 開啟…」選資料夾)';
+    $('sRoots').innerHTML = a.roots.length ? a.roots.map(esc).join('<br>') : a.app ? '還沒有(用「檔案 › 開啟…」選資料夾)' : '還沒有(用側欄的「開啟資料夾…」選)';
     $('sFile').textContent = a.settings_file;
     $('sIndexMsg').textContent = `檔名清單 ${a.index_mb} MB · 搜尋子資料夾用;檔案搬動後搜尋結果對不上時清除`;
   } catch {}
@@ -2412,6 +2439,51 @@ async function checkUpdate(manual = false) {
   }
 }
 setInterval(() => checkUpdate(), 6 * 3600 * 1000);
+// ---- 瀏覽器版的「開啟資料夾」:從家目錄、外接硬碟一層層點進去;選定後伺服器才開始讀那裡的檔
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
+const PK = { path: null, seq: 0 };
+async function openFolder(path) {
+  const r = await fetch('/api/open', { method: 'POST', headers: { 'X-Ncglobe': 'settings', 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  S.roots = j.roots;
+  return j.path;
+}
+async function pickGo(path) {
+  const my = ++PK.seq;
+  let d;
+  try { d = await api('/api/browse', { path }, { quiet: true }); }
+  catch (e) { $('pkErr').textContent = e.message === 'not found' ? '伺服器還是舊版:結束 ncglobe 後重新執行一次' : e.message; return; }
+  if (my !== PK.seq) return;   // 連點兩層:只畫最後一次
+  PK.path = d.path;
+  $('pkErr').textContent = '';
+  $('pkPath').value = d.path || '';
+  const list = $('pkList');
+  list.innerHTML = '';
+  if (d.path) list.append(item('↑', '..', '', () => pickGo(d.parent)));
+  for (const x of d.dirs) list.append(item('▸', x.name, '', () => pickGo(x.path), false, x.path));
+  if (d.path && !d.dirs.length) list.append(Object.assign(document.createElement('div'), { className: 'item dim', textContent: '(沒有子資料夾)' }));
+  $('pkMsg').textContent = !d.path ? '選一個起點' : d.files ? `這一層有 ${d.files} 個資料檔` : '這一層沒有資料檔(子資料夾裡的也找得到)';
+  $('pkOpen').disabled = !d.path;
+  list.scrollTop = 0;
+}
+function pickOpen() {
+  if (S.app) return;   // App 版用選單的原生對話框
+  $('pickModal').hidden = false;
+  $('pkErr').textContent = '';
+  pickGo(null);
+  $('pkPath').focus();
+}
+function closePick() { $('pickModal').hidden = true; }
+$('pkOpen').onclick = async () => {
+  if (!PK.path) return;
+  try { const p = await openFolder(PK.path); closePick(); $('search').value = ''; openDir(p); }
+  catch (e) { $('pkErr').textContent = e.message; }
+};
+$('pkPath').addEventListener('keydown', e => { if (e.key === 'Enter' && $('pkPath').value.trim()) { e.preventDefault(); pickGo($('pkPath').value.trim()); } });
+$('pkClose').onclick = $('pkCancel').onclick = closePick;
+$('pickModal').addEventListener('click', e => { if (e.target === $('pickModal')) closePick(); });
+$('pickModal').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closePick(); } });
 
 (async () => {
   await loadSettings();

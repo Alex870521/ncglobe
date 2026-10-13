@@ -208,6 +208,103 @@ def roots() -> list[Path]:
     return rs
 
 
+# ------------------------------------------------------------------ 瀏覽器版的「開啟資料夾」
+
+# App 版用 macOS 的開啟對話框選資料夾;瀏覽器版沒有原生對話框,改由網頁一層層點:
+# 只列得到家目錄、外接硬碟(Windows:各磁碟機)底下的資料夾名稱,選定後才加進 roots 開始讀檔。
+# 選過的資料夾記在 folders.json,下次啟動自動再加進來(「最近開啟」的檔才不會全部變灰)。
+FOLDERS_MAX = 20
+
+
+def _folders_file() -> Path:
+    return CONFIG_DIR / 'folders.json'
+
+
+def browse_places() -> list[Path]:
+    """「開啟資料夾」的起點:家目錄、外接硬碟、其他磁碟機,加上已經可讀的資料夾。"""
+    places = [Path.home()] + external_volumes()
+    if os.name == 'nt' and hasattr(os, 'listdrives'):
+        places += [Path(d) for d in os.listdrives()]
+    elif sys.platform.startswith('linux'):
+        places += [p for p in (Path('/media') / Path.home().name, Path('/mnt')) if p.is_dir()]
+    for r in ROOTS:
+        if not any(r == p or r.is_relative_to(p) for p in places):
+            places.append(r)
+    out = []
+    for p in places:
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def _browsable(path: str) -> Path:
+    if IN_APP:   # App 版用原生的開啟對話框
+        raise Forbidden(path)
+    p = Path(path).expanduser().resolve()
+    if not p.is_dir():
+        raise NotADirectoryError(path)
+    if not any(p == r or p.is_relative_to(r) for r in browse_places()):
+        raise Forbidden(path)
+    return p
+
+
+def browse(path: str | None) -> dict:
+    """「開啟資料夾」對話框的一層:子資料夾名稱與這層有幾個資料檔(不讀檔案內容)。"""
+    places = browse_places()
+    if not path:
+        return {'path': None, 'parent': None, 'files': 0,
+                'dirs': [{'name': '家目錄' if p == Path.home() else str(p), 'path': str(p)} for p in places]}
+    p = _browsable(path)
+    dirs, files = [], 0
+    try:
+        kids = sorted(p.iterdir(), key=lambda c: c.name.lower())
+    except PermissionError:
+        raise ValueError(f'沒有權限讀取「{p.name or p}」。macOS:到「系統設定 › 隱私權與安全性 › 檔案與資料夾」'
+                         f'允許終端機讀取,再試一次。') from None
+    for c in kids:
+        if c.name.startswith('.') or (p == Path.home() and c.name == 'Library'):   # 跟 Finder 一樣藏起來
+            continue
+        try:
+            if c.is_dir():
+                dirs.append({'name': c.name, 'path': str(c)})
+            elif c.suffix.lower() in NC_SUFFIXES:
+                files += 1
+        except OSError:
+            pass
+    parent = None if p in places else str(p.parent)
+    return {'path': str(p), 'parent': parent, 'dirs': dirs, 'files': files}
+
+
+def _add_root(p: Path) -> None:
+    if not any(p == r or p.is_relative_to(r) for r in ROOTS):
+        ROOTS.append(p)
+
+
+def open_folder(path: str) -> dict:
+    """瀏覽器版選定一個資料夾:加進 roots,並記下來下次啟動自動加入。"""
+    p = _browsable(path)
+    _add_root(p)
+    saved = [x for x in load_folders() if x != p]
+    saved.insert(0, p)
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _folders_file().with_suffix('.tmp')
+        tmp.write_text(json.dumps([str(x) for x in saved[:FOLDERS_MAX]], ensure_ascii=False, indent=1))
+        tmp.replace(_folders_file())
+    except OSError:
+        pass   # 記不下來只是下次要再選一次
+    return {'path': str(p), 'roots': [str(r) for r in roots()]}
+
+
+def load_folders() -> list[Path]:
+    """之前選過、現在還在的資料夾(外接硬碟拔掉了就先略過)。"""
+    try:
+        raw = json.loads(_folders_file().read_text())
+    except (OSError, ValueError):
+        return []
+    return [Path(x) for x in raw if isinstance(x, str) and Path(x).is_dir()] if isinstance(raw, list) else []
+
+
 def resolve(path: str) -> Path:
     """只允許 roots 底下的路徑(擋 ../ 與符號連結跳出去)。"""
     p = Path(path).expanduser().resolve()
@@ -548,7 +645,7 @@ def _listed_dirs(c: Path) -> list[dict]:
 
 def list_dir(path: str | None) -> dict:
     if not path:
-        return {'path': None, 'parent': None,
+        return {'path': None, 'parent': None, 'app': IN_APP,
                 'dirs': [{'name': str(r), 'path': str(r)} for r in roots()], 'files': []}
     p = resolve(path)
     dirs, files = [], []
@@ -2663,8 +2760,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(save_settings(body))
                 if path == '/api/index/clear':
                     return self._json(clear_search_index())
+                if path == '/api/open':
+                    if not isinstance(body, dict):
+                        raise ValueError('要給 {"path": 資料夾}')
+                    return self._json(open_folder(str(body.get('path') or '')))
             except ValueError as e:
                 return self._json({'error': str(e)}, 400)
+            except Forbidden as e:
+                return self._json({'error': f'不能開啟「{e}」:只能選家目錄或外接硬碟底下的資料夾。'}, 403)
+            except (FileNotFoundError, NotADirectoryError) as e:
+                return self._json({'error': f'找不到這個資料夾:{e}'}, 404)
         self._json({'error': 'not found'}, 404)
 
     # 會改變狀態或很吃資源的 GET:要 X-Ncglobe 標頭。跨站的 <img>/表單/fetch 帶不了自訂標頭
@@ -2693,6 +2798,8 @@ class Handler(BaseHTTPRequestHandler):
                                   {'Cache-Control': 'max-age=86400'})
             if u.path == '/api/ls':
                 return self._json(list_dir(q.get('path')))
+            if u.path == '/api/browse':
+                return self._json(browse(q.get('path')))
             if u.path == '/api/series':
                 return self._json(series_at(json.loads(q['files']), q.get('group', ''), q['var'],
                                             json.loads(q.get('idx') or '{}'), _num(q, 'x', -1e8, 1e8), _num(q, 'y', -1e8, 1e8), _qa(q),
@@ -2808,7 +2915,7 @@ class Handler(BaseHTTPRequestHandler):
         except Forbidden as e:
             code = 403
             self._json({'error': f'「{Path(str(e)).name}」不在目前允許讀取的資料夾裡({Path(str(e)).parent})。'
-                                 f'App 版:用選單「檔案 › 開啟…」(⌘O)選它所在的資料夾;指令版:啟動時把那個資料夾一起列出來。'}, 403)
+                                 + ('用選單「檔案 › 開啟…」(⌘O)選它所在的資料夾。' if IN_APP else '按左側的「開啟資料夾…」選它所在的資料夾。')}, 403)
         except TooBig as e:
             code = 413
             self._json({'error': str(e)}, 413)
@@ -2873,6 +2980,8 @@ def main():
     paths = args.paths or [os.getcwd()]
     if IN_APP:   # App 版只讀使用者在「開啟」對話框選的地方(之後由 macapp 加入);不預設家目錄,
         paths = list(args.paths)   # 否則一掃描就碰到桌面、文件、外接碟,macOS 每個都要問一次權限
+    if not IN_APP:   # 之前在網頁上「開啟資料夾」選過的
+        ROOTS.extend(load_folders())
     for raw in paths:
         p = Path(raw).expanduser().resolve()
         if p.is_file():                      # 給檔案:它的資料夾當 root,啟動後直接打開

@@ -181,3 +181,39 @@ def test_side_effect_endpoints_need_the_custom_header(data, http):
     with urllib.request.urlopen(urllib.request.Request(url, headers={'X-Ncglobe': '1'}), timeout=10) as r:
         assert r.status == 200
     assert _get(http + '/api/update')[0] == 403
+
+
+def test_open_folder_from_the_page_adds_a_root_and_is_remembered(http, data, tmp_path, monkeypatch):
+    home = tmp_path / 'home'
+    (home / 'sat' / 'no2').mkdir(parents=True)
+    (home / 'sat' / 'a.nc').write_bytes(b'')
+    (home / '.hidden').mkdir()
+    monkeypatch.setattr(s.Path, 'home', classmethod(lambda cls: home))
+    monkeypatch.setattr(s, 'CONFIG_DIR', tmp_path / 'cfg')
+
+    def post(body, hdr='settings'):
+        req = urllib.request.Request(http + '/api/open', data=json.dumps(body).encode(), method='POST',
+                                     headers={'X-Ncglobe': hdr, 'Content-Type': 'application/json'})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    code, _, body = _get(http + '/api/browse')
+    assert code == 200 and str(home) in [d['path'] for d in json.loads(body)['dirs']]
+    code, _, body = _get(http + '/api/browse?' + urllib.parse.urlencode({'path': str(home)}))
+    assert [d['name'] for d in json.loads(body)['dirs']] == ['sat']             # 隱藏資料夾不列
+    code, _, body = _get(http + '/api/browse?' + urllib.parse.urlencode({'path': str(home / 'sat')}))
+    assert json.loads(body)['files'] == 1 and json.loads(body)['parent'] == str(home)
+    assert _get(http + '/api/browse?path=/etc')[0] == 403                    # 家目錄、外接硬碟以外不列
+
+    target = str((home / 'sat').resolve())
+    assert _get(http + '/api/ls?' + urllib.parse.urlencode({'path': target}))[0] == 403
+    assert post({'path': target}, hdr='1')[0] == 404                         # 沒有對的標頭:不認
+    assert post({'path': '/etc'})[0] == 403
+    assert post(['x'])[0] == 400
+    code, j = post({'path': target})
+    assert code == 200 and target in j['roots']
+    assert _get(http + '/api/ls?' + urllib.parse.urlencode({'path': target}))[0] == 200
+    assert s.load_folders() == [home / 'sat']                                 # 下次啟動自動加回來
