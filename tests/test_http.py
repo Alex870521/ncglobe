@@ -228,3 +228,18 @@ def test_install_kind_decides_how_to_update(monkeypatch):
     assert s.install_kind() == 'npm'
     monkeypatch.setattr(s.sys, 'executable', r'C:\tools\ncglobe\ncglobe.exe')
     assert s.install_kind() == 'exe'
+
+
+def test_connections_are_kept_alive_for_many_requests(http):
+    from http.client import HTTPConnection
+    c = HTTPConnection(http.removeprefix('http://'))
+    for _ in range(3):                                   # 同一條連線連續三個請求
+        c.request('GET', '/static/logo.svg')
+        r = c.getresponse()
+        assert r.status == 200 and r.version == 11 and len(r.read()) == int(r.headers['Content-Length'])
+    c.request('GET', '/api/ls?path=/etc')                # 錯誤回應也有長度,連線還能用
+    r = c.getresponse()
+    assert r.status == 403 and r.read()
+    c.request('GET', '/static/logo.svg')
+    assert c.getresponse().status == 200
+    c.close()

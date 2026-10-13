@@ -133,3 +133,43 @@ def test_folder_list_merges_year_month_and_single_child_chains(tmp_path, monkeyp
     assert s.list_dir(str(r / 'L2' / 'NO2' / '2026' / '02'))['parent'] == str(r / 'L2' / 'NO2')   # .. 跳過年
     assert s.list_dir(str(day))['parent'] == str(r / 'global' / 'NO2')
     assert s.list_dir(str(r / 'global' / 'NO2'))['parent'] == str(r)
+
+
+def test_tiles_outside_the_data_are_shared_and_kept_on_disk(data, tmp_path, monkeypatch):
+    import math
+    monkeypatch.setattr(s, 'BLANK_TILE_DIR', tmp_path / 'tiles')
+    monkeypatch.setattr(s, '_tiles', s.OrderedDict())
+    f, var = data['swaths'][0], VAR
+    _, lo, la = s.footprint(f, 'PRODUCT', var)
+    n, cx, cy = 8, float(lo.mean()), float(la.mean())
+    x = int((cx + 180) / 360 * n)
+    y = int((1 - math.asinh(math.tan(math.radians(cy))) / math.pi) / 2 * n)
+    far = ((x + n // 2) % n, y)
+
+    def tile(xy, cmap='Jet'):
+        return s.tile(f'{xy}{cmap}', f, 'PRODUCT', var, {}, 0.5, 0.0, 1e-4, cmap, False, 3, *xy, None)
+
+    with_data, blank = tile((x, y)), tile(far)
+    assert with_data != blank
+    assert not list((tmp_path / 'tiles').rglob(f'3/{x}_{y}.png'))           # 有資料的不存
+    assert list((tmp_path / 'tiles').rglob(f'3/{far[0]}_{far[1]}.png'))     # 空白的存起來
+    assert tile(far, 'Viridis') == blank                                    # 換色表、換檔都共用
+    monkeypatch.setattr(s, '_tiles', s.OrderedDict())                    # 重新啟動:從硬碟讀
+    assert tile(far, 'Turbo') == blank
+
+
+def test_prewarm_draws_the_wide_levels_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(s, 'BLANK_TILE_DIR', tmp_path / 'tiles')
+    monkeypatch.setattr(s, '_tiles', s.OrderedDict())
+    assert s.prewarm_blank_tiles(frozenset(), max_z=1) == 5          # z0 一張 + z1 四張
+    assert len(list((tmp_path / 'tiles').rglob('*.png'))) == 5
+    assert s.prewarm_blank_tiles(frozenset(), max_z=1) == 0          # 已經有了:不重畫
+
+
+@pytest.mark.skipif(not s.gshhg_installed(), reason='GSHHG not installed')
+def test_coastline_pieces_are_cached_on_disk(tmp_path, monkeypatch):
+    monkeypatch.setattr(s, 'COAST_CACHE_DIR', tmp_path / 'coast')
+    coords, offs = s._coast_arrays('l')
+    assert s._coast_cache_file('l').exists() and offs[-1] == len(coords)
+    c2, o2 = s._coast_arrays('l')                                     # 第二次從快取讀
+    assert np.array_equal(coords, c2) and np.array_equal(offs, o2)

@@ -1502,53 +1502,48 @@ def _merc(lat):
     return np.log(np.tan(np.pi / 4 + np.radians(la) / 2))
 
 
-def tile(key: str, file: str, group: str, var: str, idx: dict, qa_min, vmin: float, vmax: float, cmap: str,
-         log: bool, z: int, x: int, y: int, job: dict | None, layers: frozenset = frozenset({'coast'})) -> bytes:
-    """一張地球儀圖磚:這一格(Web Mercator)範圍內的資料 + 勾選的圖層(海岸線、國界、經緯線)。
-
-    整個地球一張貼圖放大就糊;改成圖磚後,globe.gl 依縮放層級只要畫面上那幾張,
-    放大多少就細多少。資料走同一套快取(L2 的陣列、角點都已在記憶體),一張約幾十毫秒。
-    """
-    with _tile_lock:
-        hit = _tiles.get(key)
-        if hit is not None:
-            _tiles.move_to_end(key)
-            return hit
-    import matplotlib
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
-
+def _tile_bbox(z: int, x: int, y: int) -> tuple[list[float], float, float]:
+    """圖磚的經緯度範圍與上下緣的 Mercator y。"""
     n = 2 ** z
     lon0, lon1 = x / n * 360 - 180, (x + 1) / n * 360 - 180
     ym1 = math.pi * (1 - 2 * y / n)          # 上緣(Mercator y)
     ym0 = math.pi * (1 - 2 * (y + 1) / n)    # 下緣
     lat0, lat1 = math.degrees(math.atan(math.sinh(ym0))), math.degrees(math.atan(math.sinh(ym1)))
-    bbox = [lon0, lat0, lon1, lat1]
-    span = max(lon1 - lon0, lat1 - lat0)
+    return [lon0, lat0, lon1, lat1], ym0, ym1
 
-    path = str(resolve(file))
-    ds = dataset(path, group)
-    da = ds[var]
-    ydim, xdim, kind, lat, lon = plot_axes(ds, var)
-    sel = _sel(da, idx, ydim, xdim)
-    data = None
-    if job is not None:
-        g = composite_grid(job['id'], bbox, job.get('mode', 'mean'), job.get('res'), max_px=TILE_PX)
-        data = ('grid', (np.asarray(g['_x']), np.asarray(g['_y']), g['_z']))
-    elif kind == 'curvilinear':
-        sw = _swath(ds, (path, group), var, ydim, xdim, lat, lon, sel, bbox, qa_min, TILE_PX * TILE_PX)
-        data = ('swath', sw) if sw is not None else None
-    elif lat and lon:
-        gx, gy, gz, _, _ = _regular_window(ds, (path, group), var, ydim, xdim, lat, lon, sel, bbox, TILE_PX)
-        data = ('grid', (gx, gy, gz))
 
+def _cached_tile(key):
+    with _tile_lock:
+        hit = _tiles.get(key)
+        if hit is not None:
+            _tiles.move_to_end(key)
+        return hit
+
+
+def _keep_tile(key, png: bytes) -> bytes:
+    with _tile_lock:
+        _tiles[key] = png
+        while len(_tiles) > 3000:
+            _tiles.popitem(last=False)
+    return png
+
+
+def _render_tile(z: int, x: int, y: int, layers: frozenset, data=None, cmap: str = 'Jet',
+                 vmin: float = 0.0, vmax: float = 1.0, log: bool = False) -> bytes:
+    """畫一張圖磚:資料(可以沒有)+ 圖層。"""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from PIL import Image
+
+    bbox, ym0, ym1 = _tile_bbox(z, x, y)
+    span = max(bbox[2] - bbox[0], bbox[3] - bbox[1])
     with _draw_lock:
         fig = Figure(figsize=(TILE_PX / 100, TILE_PX / 100), dpi=100)
         FigureCanvasAgg(fig)
         fig.patch.set_facecolor('#e9ecf0')
         ax = fig.add_axes((0, 0, 1, 1))
         ax.set_axis_off()
-        ax.set_xlim(lon0, lon1)
+        ax.set_xlim(bbox[0], bbox[2])
         ax.set_ylim(ym0, ym1)
         cm = _cmap(cmap)
         if data and data[0] == 'swath':
@@ -1578,22 +1573,117 @@ def tile(key: str, file: str, group: str, var: str, idx: dict, qa_min, vmin: flo
                         color=color, linewidth=width * (1.4 if span < 5 else 1))
         buf = io.BytesIO()
         # 自己存 PNG:壓縮等級 1 比 matplotlib 預設(6)快好幾倍,圖磚只差幾 KB
-        from PIL import Image
         canvas = fig.canvas
         canvas.draw()
         Image.frombuffer('RGBA', canvas.get_width_height(), canvas.buffer_rgba()).save(buf, 'PNG', compress_level=1)
-    png = buf.getvalue()
-    with _tile_lock:
-        _tiles[key] = png
-        while len(_tiles) > 3000:
-            _tiles.popitem(last=False)
-    return png
+    return buf.getvalue()
+
+
+def blank_tile(z: int, x: int, y: int, layers: frozenset) -> bytes:
+    """沒有資料的圖磚:只有底色與圖層,跟檔案、變數、色表都無關。記憶體 → 硬碟 → 現畫(畫完存硬碟)。"""
+    key = ('blank', z, x, y, layers)
+    hit = _cached_tile(key)
+    if hit is not None:
+        return hit
+    disk = _blank_file(z, x, y, layers)
+    try:
+        return _keep_tile(key, disk.read_bytes())
+    except OSError:
+        pass
+    png = _render_tile(z, x, y, layers)
+    try:   # 存到硬碟:下次啟動、換檔都不必再畫
+        disk.parent.mkdir(parents=True, exist_ok=True)
+        tmp = disk.with_suffix(f'.{uuid.uuid4().hex[:8]}.tmp')
+        tmp.write_bytes(png)
+        tmp.replace(disk)
+    except OSError:
+        pass
+    return _keep_tile(key, png)
+
+
+PREWARM_MAX_Z = 4   # 縮小看大範圍時用到的層級:z0–z4 共 341 張
+
+
+def prewarm_blank_tiles(layers: frozenset, max_z: int = PREWARM_MAX_Z) -> int:
+    """背景先把大範圍層級的空白圖磚畫好存硬碟(每台電腦、每種圖層組合只做一次)。
+    用滾輪縮小會一路經過好幾個層級,第一次用時這些圖磚都得現畫;先畫好就不必排隊。"""
+    n = 0
+    for z in range(max_z + 1):
+        for x in range(2 ** z):
+            for y in range(2 ** z):
+                if ('blank', z, x, y, layers) in _tiles or _blank_file(z, x, y, layers).exists():
+                    continue
+                blank_tile(z, x, y, layers)
+                n += 1
+                time.sleep(0.002)   # 讓出繪圖鎖:使用者正在看的圖磚優先
+    return n
+
+
+def tile(key: str, file: str, group: str, var: str, idx: dict, qa_min, vmin: float, vmax: float, cmap: str,
+         log: bool, z: int, x: int, y: int, job: dict | None, layers: frozenset = frozenset({'coast'})) -> bytes:
+    """一張地球儀圖磚:這一格(Web Mercator)範圍內的資料 + 勾選的圖層(海岸線、國界、經緯線)。
+
+    整個地球一張貼圖放大就糊;改成圖磚後,globe.gl 依縮放層級只要畫面上那幾張,
+    放大多少就細多少。資料走同一套快取(L2 的陣列、角點都已在記憶體),一張約幾十毫秒。
+    """
+    hit = _cached_tile(key)
+    if hit is not None:
+        return hit
+    bbox, _, _ = _tile_bbox(z, x, y)
+    path = str(resolve(file))
+    # 資料涵蓋範圍以外的圖磚(縮小時畫面上大多是這種):全部共用一份,也不必讀資料。
+    # 不然縮小一次上百張排隊等同一把繪圖鎖,要等好幾秒
+    if job is None and not _may_have_data(path, group, var, bbox):
+        return blank_tile(z, x, y, layers)
+    data = None
+    if job is not None:
+        g = composite_grid(job['id'], bbox, job.get('mode', 'mean'), job.get('res'), max_px=TILE_PX)
+        data = ('grid', (np.asarray(g['_x']), np.asarray(g['_y']), g['_z']))
+    else:
+        ds = dataset(path, group)
+        ydim, xdim, kind, lat, lon = plot_axes(ds, var)
+        sel = _sel(ds[var], idx, ydim, xdim)
+        if kind == 'curvilinear':
+            sw = _swath(ds, (path, group), var, ydim, xdim, lat, lon, sel, bbox, qa_min, TILE_PX * TILE_PX)
+            data = ('swath', sw) if sw is not None else None
+        elif lat and lon:
+            gx, gy, gz, _, _ = _regular_window(ds, (path, group), var, ydim, xdim, lat, lon, sel, bbox, TILE_PX)
+            data = ('grid', (gx, gy, gz))
+    return _keep_tile(key, _render_tile(z, x, y, layers, data, cmap, vmin, vmax, log))
 
 
 # ------------------------------------------------------------------ 哪些檔經過目前視野
 
 _FOOT: OrderedDict = OrderedDict()
 _foot_lock = threading.Lock()
+
+
+BLANK_TILE_DIR = VENDOR_DIR / 'tiles'
+BLANK_TILE_VERSION = 1   # 空白圖磚的畫法(底色、線寬…)改了就加一,舊的快取自動不用
+
+
+def _blank_file(z: int, x: int, y: int, layers: frozenset) -> Path:
+    """沒有資料的圖磚只看位置與圖層;海岸線來源(有沒有裝 GSHHG 各級)也算進去。"""
+    coast = ''.join(sc for sc in 'lihf' if _gshhg_file(sc).exists()) or 'ne'
+    tag = f'v{BLANK_TILE_VERSION}-{"-".join(sorted(layers)) or "none"}-{coast}'
+    return BLANK_TILE_DIR / tag / str(z) / f'{x}_{y}.png'
+
+
+def _may_have_data(path: str, group: str, var: str, bbox: list[float]) -> bool:
+    """這一格可能有資料嗎?用 footprint 的外框粗估(取樣點每 8 個像素一點,外擴 1° 免得邊緣被切掉)。
+    跨過換日線的軌道外框會變成整圈經度:寧可多畫,不會漏。"""
+    fp = footprint(path, group, var)
+    if fp is None:
+        return True
+    if fp[0] == 'box':
+        lo0, la0, lo1, la1 = fp[1]
+    else:
+        o, a = fp[1], fp[2]
+        if not o.size:
+            return True
+        lo0, lo1, la0, la1 = float(o.min()), float(o.max()), float(a.min()), float(a.max())
+    pad = 1.0
+    return not (bbox[2] < lo0 - pad or bbox[0] > lo1 + pad or bbox[3] < la0 - pad or bbox[1] > la1 + pad)
 
 
 def footprint(path: str, group: str, var: str):
@@ -2347,23 +2437,73 @@ def gshhg_installed() -> bool:
     return _gshhg_file('l').exists()
 
 
-@lru_cache(maxsize=4)
-def _gshhg_index(scale: str):
-    """一級 GSHHG 海岸線切成每段最多 1000 點的線段,建 STRtree。
+COAST_CACHE_DIR = VENDOR_DIR / 'coast'
+COAST_CACHE_VERSION = 1
 
-    大陸是一整個多邊形(full 級有上百萬個點),每次都拿整圈去裁會很慢;
-    切段後查詢只拿到畫面附近的幾段。full 第一次載入約 10 秒、記憶體幾百 MB,之後重複用。
+
+def _coast_cache_file(scale: str) -> Path:
+    """切好的線段存成 numpy 檔;shapefile 換了(大小、時間不同)就是另一個檔名。"""
+    st = _gshhg_file(scale).stat()
+    return COAST_CACHE_DIR / f'gshhs_{scale}_v{COAST_CACHE_VERSION}_{st.st_size}_{int(st.st_mtime)}.npz'
+
+
+def _coast_arrays(scale: str) -> tuple[np.ndarray, np.ndarray]:
+    """一級 GSHHG 海岸線切成每段最多 1000 點:(所有點的座標, 每段的起點)。
+
+    讀 shapefile 很慢(full 級約 7 秒,大陸是一整個上百萬點的多邊形);
+    切好的結果存成 numpy 檔,之後 0.1 秒內讀完。float32 在經度 180° 處約 2 m,比 full 級的 40 m 細。
     """
     import shapely
     from cartopy.io import shapereader
+    cache = _coast_cache_file(scale)
+    try:
+        with np.load(cache) as d:
+            return d['coords'], d['offs']
+    except (OSError, ValueError, KeyError):
+        pass
     pieces = []
     for poly in shapereader.Reader(str(_gshhg_file(scale))).geometries():
         for ring in [poly.exterior, *poly.interiors] if poly.geom_type == 'Polygon' else \
                 [r for p in poly.geoms for r in (p.exterior, *p.interiors)]:
             xy = shapely.get_coordinates(ring)
             for i in range(0, len(xy) - 1, 1000):
-                pieces.append(shapely.linestrings(xy[i:i + 1001]))
-    return pieces, shapely.STRtree(pieces)
+                pieces.append(xy[i:i + 1001])
+    coords = np.concatenate(pieces).astype('float32')
+    offs = np.cumsum([0] + [len(p) for p in pieces]).astype('int64')
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        for old in cache.parent.glob(f'gshhs_{scale}_*.npz'):   # 舊版本、舊 shapefile 的
+            old.unlink(missing_ok=True)
+        tmp = cache.with_name(f'{cache.stem}.{uuid.uuid4().hex[:8]}.tmp.npz')
+        np.savez(tmp, coords=coords, offs=offs)
+        tmp.replace(cache)
+    except OSError:
+        pass
+    return coords, offs
+
+
+@lru_cache(maxsize=4)
+def _gshhg_index(scale: str):
+    """一級 GSHHG 海岸線的線段與 STRtree。
+
+    大陸是一整個多邊形(full 級有上百萬個點),每次都拿整圈去裁會很慢;
+    切段後查詢只拿到畫面附近的幾段。記憶體幾百 MB,之後重複用。
+    """
+    import shapely
+    coords, offs = _coast_arrays(scale)
+    pieces = shapely.linestrings(coords.astype('float64'), indices=np.repeat(np.arange(len(offs) - 1), np.diff(offs)))
+    return list(pieces), shapely.STRtree(pieces)
+
+
+def prepare_coast_cache() -> None:
+    """背景把各級海岸線的快取檔準備好(只讀檔、不留在記憶體):第一次放大到很細時不必等 7 秒。"""
+    for _, sc, _ in GSHHG_SCALES:
+        try:
+            if _gshhg_file(sc).exists() and not _coast_cache_file(sc).exists():
+                with _coast_lock:
+                    _coast_arrays(sc)
+        except OSError:
+            pass
 
 
 def coast_scale(span: float) -> tuple[str, str]:
@@ -2410,6 +2550,8 @@ def install_gshhg() -> None:
                     (dest / f'GSHHS_{sc}_L1.{ext}').write_bytes(zf.read(f'GSHHS_shp/{sc}/GSHHS_{sc}_L1.{ext}'))
             (_gshhg_file('f').parent.parent / 'LICENSE.TXT').write_bytes(zf.read('LICENSE.TXT'))
     print(f'完成 → {_gshhg_file("f").parent.parent}(GSHHG,LGPL v3)', flush=True)
+    print('準備海岸線快取…', flush=True)
+    prepare_coast_cache()
 
 
 def _lines(geoms, bbox, tol) -> tuple[list, list]:
@@ -2708,6 +2850,11 @@ def _num(q, key: str, lo: float, hi: float, default=None, kind=float):
 
 
 class Handler(BaseHTTPRequestHandler):
+    # HTTP/1.1:連線重複用。地球儀縮小一次上百張圖磚,HTTP/1.0 每張都要重新連線,
+    # 瀏覽器同時只開 6 條,排隊的時間比伺服器畫圖還久
+    protocol_version = 'HTTP/1.1'
+    timeout = 120   # 閒置的連線兩分鐘後關掉,不要一直佔著執行緒
+
     def log_message(self, fmt, *args):  # 預設的存取紀錄太吵;自己印耗時(見 do_GET)
         pass
 
@@ -2715,6 +2862,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.send_response(code)
             self.send_header('Content-Type', ctype)
+            self.send_header('Content-Length', str(len(body)))   # HTTP/1.1 連線要重複用,得說清楚這次多長
             if 'Cache-Control' not in (extra or {}):
                 self.send_header('Cache-Control', 'no-store')
             for k, v in (extra or {}).items():
@@ -3018,13 +3166,18 @@ def main():
     srv.daemon_threads = True
     # HDF5 每個變數的解壓快取預設只有 4 MB;壓縮塊比它大時,每次讀取都得重新解壓整塊
     netCDF4.set_chunk_cache(size=256 * 1024**2, nelems=1009, preemption=0.75)
-    if gshhg_installed():   # 常用的三級先在背景載好(h 約 3 秒);最細的 f 等真的放大到那裡再載
-        def warm():
+    def warm():
+        # 常用的三級海岸線先載好(h 約 3 秒);最細的 f 只準備快取檔,等真的放大到那裡再載(0.2 秒)
+        if gshhg_installed():
             for sc in ('l', 'i', 'h'):
                 with _coast_lock:
                     _gshhg_index(sc)
-        threading.Thread(target=warm, daemon=True).start()
-    else:
+            prepare_coast_cache()
+        # 縮小看大範圍時的空白圖磚:用目前設定的圖層先畫好
+        st = load_settings()
+        prewarm_blank_tiles(frozenset(k for k in ('coast', 'borders', 'grid') if st.get(k)))
+    threading.Thread(target=warm, daemon=True).start()
+    if not gshhg_installed():
         print('提示:海岸線用 Natural Earth;要更細的 GSHHG(約 40 m)請執行 ncglobe --install-gshhg', file=sys.stderr)
     print(f'ncglobe → {url}  (roots: {", ".join(map(str, roots()))}, cache {args.cache_mb} MB)  Ctrl+C 結束')
     if IN_APP:   # App 自己的視窗(WKWebView)+ Finder「打開方式」;伺服器改在背景執行緒
